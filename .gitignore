@@ -1,0 +1,42 @@
+# ---- Rust build artifacts ----
+/target/
+mpileup_variant_caller/target/
+
+# ---- Pipeline outputs / run artifacts ----
+output/
+results/
+*.bam
+*.bai
+*.vcf
+*.vcf.gz
+*.mpileup
+manifest.tsv
+batch_summary.txt
+pipeline.log
+
+# ---- Sequencing data (never commit reads) ----
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# ---- Reference genomes & indexes (large; provide out of band) ----
+*.fa
+*.fasta
+*.fai
+*.0123
+*.amb
+*.ann
+*.bwt.2bit.64
+*.pac
+
+# ---- Local SIMD wrapper created during setup ----
+/bin/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- OS / editor ----
+.DS_Store
+*.swp

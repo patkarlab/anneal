@@ -1,0 +1,2 @@
+// Placeholder: compile with nvcc to generate real PTX
+// nvcc -ptx -arch=sm_86 consensus_kernel.cu -o consensus_kernel.ptx

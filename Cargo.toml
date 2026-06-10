@@ -1,0 +1,49 @@
+[package]
+name = "anneal"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-accelerated duplex consensus sequence generation for UMI-based error suppression in NGS data"
+license = "MIT"
+authors = ["Patkar Lab"]
+repository = "https://github.com/patkarlab/anneal"
+
+[[bin]]
+name = "anneal"
+path = "src/main.rs"
+
+[dependencies]
+# CUDA GPU acceleration (optional)
+cudarc = { version = "0.12", features = ["cuda-12050"], optional = true }
+
+# Parallelism
+rayon = "1.10"
+
+# Collections & hashing
+ahash = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization (for config)
+serde = { version = "1", features = ["derive"] }
+
+# Logging & errors
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+
+# System info
+num_cpus = "1.16"
+
+# Compression (gzipped FASTQ)
+flate2 = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+target-cpu = "native"
+
+[features]
+default = []
+gpu = ["cudarc"]
