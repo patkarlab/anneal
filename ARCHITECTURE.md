@@ -1,4 +1,4 @@
-# CLAUDE.md -- Anneal Architecture & Design Notes
+# Anneal -- Architecture & Design Notes
 
 Guidance for working in this repository. Anneal is a duplex consensus pipeline
 for UMI-based error suppression and ultra-sensitive variant detection.

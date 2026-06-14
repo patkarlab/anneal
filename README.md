@@ -121,7 +121,7 @@ All other paths auto-resolve from the installation directory.
 ## Documentation
 
 - `SETUP_GUIDE.md`: Step-by-step fresh installation guide
-- `CLAUDE.md`: Architecture notes and design decisions
+- `ARCHITECTURE.md`: Architecture notes and design decisions
 
 ## References
 
