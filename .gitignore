@@ -40,3 +40,21 @@ __pycache__/
 # ---- OS / editor ----
 .DS_Store
 *.swp
+
+# --- patient data / results (NEVER commit) ---
+results/
+results_*/
+sample_fastq*/
+*.vcf
+*.bam
+*.fastq.gz
+*.err
+*.out
+*.annotated.tsv
+*.filtered.tsv
+*.clinical.tsv
+*_manifest.tsv
+*.bak
+*.bak_*
+target/
+target_*/

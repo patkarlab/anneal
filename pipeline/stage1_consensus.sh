@@ -53,6 +53,7 @@ fi
     --reference "${REFERENCE}" \
     --output "${SAMPLE_DIR}" \
     --aligner "${ALIGNER}" \
+    ${PARABRICKS_FLAGS:-} \
     --bpattern "${BPATTERN}" \
     --cutoff "${CUTOFF}" \
     ${SC_FLAG} \

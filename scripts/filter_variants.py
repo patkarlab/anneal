@@ -204,46 +204,56 @@ def flag_overlapping_variants(df):
     df = df.copy()
     df["Dedup_Note"] = ""
 
-    starts = df["Start"].apply(lambda v: safe_int(v, default=-1))
-    vafs = df["VAF_pct"].apply(safe_float)
-    alt_counts = df["ALT_COUNT"].apply(lambda v: safe_int(v, default=-1))
-    genes = df["Gene"].astype(str)
-    refs = df["Ref"].astype(str)
-    alts = df["Alt"].astype(str)
-
     def _is_indel(ref, alt):
         return len(ref) != len(alt) or ref == "-" or alt == "-"
 
-    n_flagged = 0
-    for i in range(len(df)):
-        if starts.iloc[i] < 0:
-            continue
-        for j in range(i + 1, len(df)):
-            if starts.iloc[j] < 0:
-                continue
-            if genes.iloc[i] != genes.iloc[j]:
-                continue
-            if abs(starts.iloc[i] - starts.iloc[j]) > 10:
-                continue
-            if not _is_indel(refs.iloc[i], alts.iloc[i]) and \
-               not _is_indel(refs.iloc[j], alts.iloc[j]):
-                continue
-            vaf_i, vaf_j = vafs.iloc[i], vafs.iloc[j]
-            if np.isnan(vaf_i) or np.isnan(vaf_j):
-                continue
-            if abs(vaf_i - vaf_j) > 2.0:
-                continue
-            ac_i, ac_j = alt_counts.iloc[i], alt_counts.iloc[j]
-            if ac_i > 0 and ac_j > 0:
-                ac_mean = (ac_i + ac_j) / 2
-                if abs(ac_i - ac_j) / ac_mean > 0.20:
-                    continue
+    # Position-windowed replacement for the original O(n^2) loop. The old
+    # loop discarded any pair >10bp apart or in a different gene as its first
+    # action, so almost all comparisons were wasted. Sorting by (Gene, Start)
+    # lets us walk a sliding window and break as soon as the gene changes or
+    # the gap exceeds 10 -- rows are sorted, so every later row also fails.
+    # Identical flags, ~linear time.
+    work = df.assign(
+        _start=df["Start"].apply(lambda v: safe_int(v, default=-1)),
+        _vaf=df["VAF_pct"].apply(safe_float),
+        _ac=df["ALT_COUNT"].apply(lambda v: safe_int(v, default=-1)),
+        _gene=df["Gene"].astype(str),
+        _ref=df["Ref"].astype(str),
+        _alt=df["Alt"].astype(str),
+    )
+    work = work[work["_start"] >= 0].sort_values(
+        ["_gene", "_start"], kind="mergesort")
+    orig_idx = work.index.to_numpy()
+    s = work["_start"].to_numpy()
+    v = work["_vaf"].to_numpy()
+    a = work["_ac"].to_numpy()
+    g = work["_gene"].to_numpy()
+    r = work["_ref"].to_numpy()
+    al = work["_alt"].to_numpy()
 
-            gene = genes.iloc[i]
+    n_flagged = 0
+    m = len(work)
+    for i in range(m):
+        for j in range(i + 1, m):
+            if g[j] != g[i]:
+                break
+            if s[j] - s[i] > 10:
+                break
+            if not _is_indel(r[i], al[i]) and not _is_indel(r[j], al[j]):
+                continue
+            if np.isnan(v[i]) or np.isnan(v[j]):
+                continue
+            if abs(v[i] - v[j]) > 2.0:
+                continue
+            if a[i] > 0 and a[j] > 0:
+                ac_mean = (a[i] + a[j]) / 2
+                if abs(a[i] - a[j]) / ac_mean > 0.20:
+                    continue
+            gene = g[i]
             note = (f"MANUAL_REVIEW: overlapping variants in {gene}, "
                     f"same VAF, likely single event -- verify in IGV")
-            df.at[df.index[i], "Dedup_Note"] = note
-            df.at[df.index[j], "Dedup_Note"] = note
+            df.at[orig_idx[i], "Dedup_Note"] = note
+            df.at[orig_idx[j], "Dedup_Note"] = note
             n_flagged += 1
 
     if n_flagged > 0:

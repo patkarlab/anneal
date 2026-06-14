@@ -58,6 +58,9 @@ ANNOVAR_DIR = os.path.join(
     os.path.expanduser("~"), "targeted-seq-pipeline", "software", "annovar",
 )
 ANNOVAR_DB = os.path.join(ANNOVAR_DIR, "humandb")
+# Current databases live in references/humandb, NOT programs/annovar/humandb.
+DEFAULT_DB = os.path.join(
+    os.path.expanduser("~"), "references", "humandb")
 
 COLUMNS = [
     "Sample", "Consensus", "Chr", "Start", "End", "Ref", "Alt",
@@ -87,11 +90,19 @@ def parse_args():
     ap.add_argument("--vep-cache", default=VEP_CACHE,
                     help="VEP cache directory")
     ap.add_argument("--annovar-dir", default=ANNOVAR_DIR,
-                    help="ANNOVAR installation directory")
+                    help="ANNOVAR installation directory (perl scripts)")
+    ap.add_argument("--annovar-db", default=DEFAULT_DB,
+                    help="ANNOVAR database directory (humandb with hg38_*.txt)")
     ap.add_argument("--skip-vep", action="store_true",
                     help="Skip VEP annotation")
     ap.add_argument("--skip-annovar", action="store_true",
                     help="Skip ANNOVAR annotation")
+    ap.add_argument("--min-alt", type=int, default=2,
+                    help="Pre-filter: only annotate variants with ALT-supporting "
+                         "read count >= this (default 2; use 1 to keep all). "
+                         "Speeds annotation by skipping the single-read background "
+                         "tail that the downstream filter discards anyway. This is "
+                         "a discovery-speed filter, NOT the MRD calling threshold.")
     return ap.parse_args()
 
 
@@ -121,7 +132,7 @@ def run_vep(vcf_in, vcf_out, reference, fork, vep_cache):
         "--fasta", reference,
         "--fork", str(fork),
         "--force_overwrite",
-        "--pick",
+        "--flag_pick",
         "--everything",
         "--hgvs",
         "--hgvsg",
@@ -132,18 +143,17 @@ def run_vep(vcf_in, vcf_out, reference, fork, vep_cache):
     return run(cmd, desc=f"Running VEP on {os.path.basename(vcf_in)}")
 
 
-def run_annovar(vcf_in, out_prefix, annovar_dir):
+def run_annovar(vcf_in, out_prefix, annovar_dir, annovar_db):
     table_annovar = os.path.join(annovar_dir, "table_annovar.pl")
-    annovar_db = os.path.join(annovar_dir, "humandb")
 
     protocols = []
     operations = []
     db_checks = [
         ("refGene", "g"),
         ("cosmic103", "f"),
-        ("gnomad30_genome", "f"),
-        ("clinvar_20220320", "f"),
-        ("avsnp150", "f"),
+        ("gnomad211_exome", "f"),
+        ("clinvar_20250721", "f"),
+        ("avsnp151", "f"),
     ]
     for db, op in db_checks:
         db_file = os.path.join(annovar_db, f"hg38_{db}.txt")
@@ -337,7 +347,16 @@ def parse_vep_csq(vep_vcf):
 
 
 def parse_annovar_txt(annovar_txt):
-    """Parse ANNOVAR multianno.txt into a dict keyed by chr:pos:ref:alt."""
+    """Parse ANNOVAR multianno.txt into a dict keyed by the ORIGINAL locus.
+
+    ANNOVAR left-normalizes indels (e.g. an insertion 'C>CTCTG' becomes
+    '-'/'TCTG'), so keying on ANNOVAR's leading Chr/Start/Ref/Alt would not
+    match the VCF/VEP key built from the original alleles, and the indel would
+    lose all ANNOVAR annotation. ANNOVAR run with -vcfinput carries the
+    ORIGINAL VCF record in the trailing Otherinfo columns; we recover the
+    original chrom/pos/ref/alt from there (locating INFO by its 'DP=' prefix)
+    and key on that, so the key matches the VCF and VEP keys exactly.
+    """
     variants = {}
     if not os.path.isfile(annovar_txt):
         log.warning("ANNOVAR output not found: %s", annovar_txt)
@@ -345,16 +364,41 @@ def parse_annovar_txt(annovar_txt):
 
     with open(annovar_txt) as f:
         reader = csv.DictReader(f, delimiter="\t")
+        fieldnames = reader.fieldnames or []
+        other_cols = [n for n in fieldnames if n and n.startswith("Otherinfo")]
         for row in reader:
-            chrom = row.get("Chr", "")
-            pos = row.get("Start", "")
-            ref = row.get("Ref", "")
-            alt = row.get("Alt", "")
+            values = [row.get(n, "") for n in other_cols]
+            info_idx = next(
+                (i for i, v in enumerate(values) if v.startswith("DP=")), None)
+            if info_idx is not None and info_idx >= 7:
+                # Original VCF record ends ... chrom pos id ref alt qual filter INFO
+                chrom = values[info_idx - 7]
+                pos = values[info_idx - 6]
+                ref = values[info_idx - 4]
+                alt = values[info_idx - 3]
+            else:
+                # Fallback to ANNOVAR's own columns if recovery fails.
+                chrom = row.get("Chr", "")
+                pos = row.get("Start", "")
+                ref = row.get("Ref", "")
+                alt = row.get("Alt", "")
             key = f"{chrom}:{pos}:{ref}:{alt}"
             variants[key] = row
 
     log.info("Parsed %d variants from ANNOVAR txt", len(variants))
     return variants
+
+
+def _annovar_col(row, prefix):
+    """Return the value of the first ANNOVAR column whose name starts with
+    `prefix` (case-insensitive), or '' if none. Lets the merge survive db
+    version drift (clinvar date, cosmic build, gnomad release) without
+    hard-coding the exact column name."""
+    p = prefix.lower()
+    for name in row:
+        if name and name.lower().startswith(p):
+            return row.get(name, "")
+    return ""
 
 
 def _clean(val):
@@ -400,16 +444,16 @@ def merge_annotations(vcf_fields, vep_variants, annovar_variants,
             "ALT_COUNT": _clean(vcf.get("alt_count", -1)),
             "Total_Depth": _clean(vcf.get("total_depth", -1)),
             "VAF_pct": _clean(vcf.get("vaf_pct", -1)),
-            "COSMIC_ID": _clean(ann.get("cosmic103", "")),
-            "ClinVar": _clean(ann.get("CLNSIG", ann.get("clinvar_20220320", ""))),
+            "COSMIC_ID": _clean(_annovar_col(ann, "cosmic")),
+            "ClinVar": _clean(ann.get("CLNSIG", "") or _annovar_col(ann, "clinvar")),
             "SIFT": _clean(vep.get("SIFT", "")),
             "PolyPhen": _clean(vep.get("PolyPhen", "")),
-            "gnomAD_exome_AF": _clean(vep.get("gnomADe_AF", "")),
-            "gnomAD_genome_AF": _clean(vep.get("gnomADg_AF",
-                                                 ann.get("gnomad30_genome", ""))),
+            "gnomAD_exome_AF": _clean(vep.get("gnomADe_AF",
+                                                 _annovar_col(ann, "gnomad"))),
+            "gnomAD_genome_AF": _clean(vep.get("gnomADg_AF", "")),
             "AF_1KG": _clean(vep.get("AF", "")),
             "Max_AF": _clean(vep.get("MAX_AF", "")),
-            "rsID": _clean(ann.get("avsnp150", vep.get("Existing_variation", ""))),
+            "rsID": _clean(_annovar_col(ann, "avsnp") or vep.get("Existing_variation", "")),
             "MANE_SELECT": _clean(vep.get("MANE_SELECT", "")),
             "Canonical": _clean(vep.get("CANONICAL", "")),
             "HGVSg": _clean(vep.get("HGVSg", "")),
@@ -425,6 +469,37 @@ def merge_annotations(vcf_fields, vep_variants, annovar_variants,
 
     log.info("Wrote %d annotated variants to %s", len(rows), output_tsv)
     return len(rows)
+
+
+def prefilter_vcf(vcf_in, vcf_out, min_alt):
+    """Write vcf_in to vcf_out keeping only records with ALT subfield >= min_alt.
+
+    ALT is the 2nd subfield of the anneal FORMAT GT:ALT:TOT:FRAC (column 10).
+    Header lines pass through unchanged. With min_alt <= 1 nothing is dropped
+    (still copied, so the rest of the flow is uniform). Returns (kept, dropped).
+    """
+    kept = dropped = 0
+    with open(vcf_in) as fin, open(vcf_out, "w") as fout:
+        for line in fin:
+            if line.startswith("#"):
+                fout.write(line)
+                continue
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 10:
+                dropped += 1
+                continue
+            fmt = dict(zip(cols[8].split(":"), cols[9].split(":")))
+            try:
+                alt_count = int(fmt.get("ALT", "0"))
+            except ValueError:
+                alt_count = 0
+            if alt_count >= min_alt:
+                fout.write(line)
+                kept += 1
+            else:
+                dropped += 1
+    log.info("Pre-filter ALT>=%d: kept %d, dropped %d", min_alt, kept, dropped)
+    return kept, dropped
 
 
 def main():
@@ -448,8 +523,14 @@ def main():
 
     basename = os.path.splitext(os.path.basename(args.vcf))[0]
 
-    # Step 1: Parse Rust caller VCF
-    vcf_fields = parse_rust_vcf(args.vcf)
+    # Step 0: pre-filter on ALT count to cut annotation workload. VEP,
+    # ANNOVAR and the count-parse all consume this filtered VCF so keys agree.
+    annotate_vcf = args.vcf
+    if args.min_alt > 1:
+        annotate_vcf = os.path.join(args.outdir, f"{basename}.minalt{args.min_alt}.vcf")
+        prefilter_vcf(args.vcf, annotate_vcf, args.min_alt)
+    # Step 1: Parse Rust caller VCF (filtered)
+    vcf_fields = parse_rust_vcf(annotate_vcf)
 
     # Step 2: VEP
     vep_variants = {}
@@ -458,7 +539,7 @@ def main():
             log.warning("VEP cache not found: %s -- skipping VEP", args.vep_cache)
         else:
             vep_vcf = os.path.join(args.outdir, f"{basename}.vep.vcf")
-            rc = run_vep(args.vcf, vep_vcf, args.reference,
+            rc = run_vep(annotate_vcf, vep_vcf, args.reference,
                          args.vep_fork, args.vep_cache)
             if rc == 0:
                 vep_variants, _ = parse_vep_csq(vep_vcf)
@@ -475,7 +556,7 @@ def main():
             log.warning("ANNOVAR not found: %s -- skipping", table_annovar)
         else:
             annovar_prefix = os.path.join(args.outdir, basename)
-            rc = run_annovar(args.vcf, annovar_prefix, args.annovar_dir)
+            rc = run_annovar(annotate_vcf, annovar_prefix, args.annovar_dir, args.annovar_db)
             annovar_txt = annovar_prefix + ".hg38_multianno.txt"
             if rc == 0:
                 annovar_variants = parse_annovar_txt(annovar_txt)

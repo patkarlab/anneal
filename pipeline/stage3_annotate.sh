@@ -72,6 +72,10 @@ for LABEL in dcs sscs; do
         --vcf "${VCF}" \
         -s "${SAMPLE}" \
         --consensus "${LABEL}" \
+        -r "${REFERENCE}" \
+        --vep-cache "${VEP_CACHE}" \
+        --annovar-dir "${ANNOVAR_DIR}" \
+        --annovar-db "${ANNOVAR_DB}" \
         -o "${ANNOTATED_DIR}" 2>&1
 
     ANNOTATED_TSV="${ANNOTATED_DIR}/${SAMPLE}.${LABEL}.annotated.tsv"

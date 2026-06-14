@@ -24,17 +24,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ANNEAL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"   # /home/hemat/anneal/
 
 # ---- Workspace directories ----
-SEQUENCES_DIR="/goast/hemat_data/duplex_fastqs/dilution"
-RESULTS_DIR="/goast/hemat_data/duplex_results"
+SEQUENCES_DIR="/home/patkarlab-clinical/pipelines/anneal/sample_fastq"
+RESULTS_DIR="/home/patkarlab-clinical/pipelines/anneal/results"
 
 # ---- Reference genome (U2AF1-fixed hg38 from targeted-seq-pipeline) ----
-REFERENCE="/home/hemat/targeted-seq-pipeline/references/hg38_broad/Homo_sapiens_assembly38.masked.fasta"
+REFERENCE="${REFERENCE:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.masked.fasta}"
 
 # ---- Target panel BED file ----
 BEDFILE="${ANNEAL_ROOT}/AML_MRD_DUPLEX_probes_hg38_sortd.bed"
 
+# ---- Annotation: VEP cache + ANNOVAR (install scripts vs database dir) ----
+# ANNOVAR scripts live under programs/annovar; the CURRENT databases live under
+# references/humandb (NOT programs/annovar/humandb, which holds an old clinvar).
+VEP_CACHE="${VEP_CACHE:-/home/patkarlab-clinical/references/vep_cache}"
+ANNOVAR_DIR="${ANNOVAR_DIR:-/home/patkarlab-clinical/programs/annovar}"
+ANNOVAR_DB="${ANNOVAR_DB:-/home/patkarlab-clinical/references/humandb}"
+
 # ---- Binaries ----
-ANNEAL="${ANNEAL_ROOT}/target/release/anneal"
+ANNEAL="${ANNEAL:-${ANNEAL_ROOT}/target/release/anneal}"
 VARIANT_CALLER="${ANNEAL_ROOT}/mpileup_variant_caller/target/release/call_variants"
 
 # ---- Family size plot script ----
@@ -44,7 +51,7 @@ PLOT_SCRIPT="${ANNEAL_ROOT}/scripts/plot_family_sizes.py"
 CONDA_ENV="anneal"
 
 # ---- Anneal consensus parameters ----
-ALIGNER="bwa-mem2"
+ALIGNER="${ALIGNER:-bwa-mem2}"
 BPATTERN="NNNSS"
 CUTOFF=0.6
 SINGLETON_CORRECTION=true
@@ -54,7 +61,7 @@ MIN_BASE_QUAL="5"    # ASCII character for Phred+33 quality threshold
 MAX_DEPTH=100000
 
 # ---- GPU ----
-USE_GPU=false
+USE_GPU="${USE_GPU:-false}"
 
 # ---- Activate conda environment ----
 activate_conda() {
@@ -66,3 +73,4 @@ activate_conda() {
     conda activate "${CONDA_ENV}"
     export PATH="${ANNEAL_ROOT}/bin:$PATH"
 }
+PARABRICKS_FLAGS="${PARABRICKS_FLAGS:-}"
