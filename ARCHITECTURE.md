@@ -218,7 +218,7 @@ single sensitivity figure.
 | indel (NPM1 type A) | blocklist | 0.056% at 3 reads / 5,402 |
 | substitution | beta-binomial | 0.138% at 5 reads / 3,619 |
 
-Reported per-locus LoD in that series ranged 0.028% to 0.056% at DCS depths of
+Reported per-locus LoD in that series ranged 0.043% to 0.075% at DCS depths of
 2,800 to 7,000.
 
 Reaching 0.02% requires roughly 10,000x DCS depth, i.e. 2-3x more sequencing
