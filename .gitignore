@@ -58,3 +58,30 @@ sample_fastq*/
 *.bak_*
 target/
 target_*/
+
+# PBS job logs
+*.o[0-9]*
+*.e[0-9]*
+
+# backups and caches
+*.bak
+*.bak_*
+*.bak.*
+__pycache__/
+
+# preserved but not published
+attic/
+
+# patient data - diagnosis marker lists must never be committed
+*.markers.tsv
+assets/marker_lists/
+
+# patient-derived manifests - sample accessions must not be published
+assets/manifests/
+logs_annot_dilution/
+
+# job templates carry absolute paths - parameterise before publishing
+jobs/
+
+# job templates carry absolute paths - parameterise against pipeline/config.sh
+jobs/
