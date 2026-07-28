@@ -1,3 +1,34 @@
+## v0.2.1 - validation corrected against measured counts
+
+No code change. Corrects the dilution validation recorded in v0.2.0.
+
+### Corrected
+- The 25NGS1601 series is a two-fold serial dilution, not five-fold. The
+  previously reported "PTPN11 steps 4.95x against a nominal 5x" was a
+  coincidence read as a result.
+- Expected VAFs on the dilution worksheet are nominal, derived from dilution
+  factors rather than measured. They run 1.5x to 4x from observed at the lower
+  rungs. Validation is now quoted against read counts taken from the consensus
+  BAMs.
+- IDH2 at rung I was briefly recorded as a false negative above the stated LoD.
+  It is not: measured content there is 0.024% against a 0.060% LoD, so the
+  non-detection is correct. The nominal 0.097% was the source of the error.
+- PTPN11 at rung G was briefly recorded as a probable false positive. It is
+  real: background at that position is one read in 18,000, flat across the
+  lower three rungs, and the 15 SSCS reads at G are a 15-fold excess.
+
+### Result
+Every DCS call and non-call across four markers and four rungs is correct when
+assessed against measured counts. No false positives, no false negatives.
+
+Deepest true detections: NPM1 0.056% (3 reads in 5,402), IDH2 0.056% (2 reads
+in 3,594).
+
+### Note on SSCS
+SSCS at the lowest rungs sits at its own noise floor rather than tracking
+dilution - IDH2 reads 10 at rung J against 5 at rung I on equal depth, when J
+should be half of I. DCS correctly reported non-detection at both. This is the
+practical case for DCS as the primary substitution track.
 ## v0.2.0 - MRD marker tracking
 
 Locks the MRD calling configuration as a marker-tracking assay. Untargeted

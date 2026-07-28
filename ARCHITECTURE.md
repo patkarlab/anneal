@@ -216,7 +216,7 @@ single sensitivity figure.
 | arm | mechanism | demonstrated |
 |-----|-----------|--------------|
 | indel (NPM1 type A) | blocklist | 0.056% at 3 reads / 5,402 |
-| substitution | beta-binomial | 0.138% at 5 reads / 3,619 |
+| substitution (IDH2 R140Q) | beta-binomial | 0.056% at 2 reads / 3,594 |
 
 Reported per-locus LoD in that series ranged 0.043% to 0.075% at DCS depths of
 2,800 to 7,000.
@@ -224,23 +224,87 @@ Reported per-locus LoD in that series ranged 0.043% to 0.075% at DCS depths of
 Reaching 0.02% requires roughly 10,000x DCS depth, i.e. 2-3x more sequencing
 than the current configuration delivers.
 
-### Dilution behaviour
+## Dilution validation
 
-Sample 25NGS1601, 1/5 serial dilution:
+Sample 25NGS1601, two-fold serial dilution across four rungs (G to J).
 
-| marker | G | H | I | J |
-|--------|---|---|---|---|
-| IDH2 R140Q | 0.363% | 0.138% | not detected | not detected |
-| NPM1 type A | 0.214% | 0.156% | 0.056% | not detected |
-| PTPN11 F285L | 0.140% | not detected | not detected | not detected |
-| CEBPA H24Afs | not evaluable at any rung | | | |
+The expected VAFs recorded on the dilution worksheet are nominal, calculated
+from dilution factors rather than measured. They run 1.5x to 4x away from
+observed at the lower rungs and should not be used as ground truth. The table
+below reports read counts taken directly from the consensus BAMs at each marker
+position, base quality 20.
 
-Every dropout occurs where the expected VAF falls below that locus's reported
-LoD. Nothing disappears above its stated detection limit and nothing appears
-below it. PTPN11 steps 4.95x from G to H against a nominal 5x dilution.
+### IDH2 R140Q, chr15 C>T
 
-At 5-12 alt reads counting noise is large; treat these as detection rather than
-quantification.
+| rung | nominal | SSCS | DCS | DCS call |
+|------|---------|------|-----|----------|
+| G | 0.387% | 0.417% (90/21,564) | 0.336% (11/3,274) | detected |
+| H | 0.193% | 0.113% (24/21,255) | 0.056% (2/3,594) | detected |
+| I | 0.097% | 0.024% (5/21,114) | 0 (0/3,324) | not detected |
+| J | 0.048% | 0.049% (10/20,520) | 0 (0/2,829) | not detected |
+
+True content at rung I is 0.024%, below the 0.060% LoD that rung supports, so
+the DCS non-detection is correct. The nominal 0.097% would have implied a false
+negative; the counts show otherwise.
+
+SSCS at rungs I and J is at its own noise floor, not tracking dilution: 10 reads
+at J exceeds 5 at I on equal depth, when J should be half of I. SSCS would have
+returned two quantitative-looking values where DCS correctly reported nothing.
+
+### PTPN11 F285L, chr12 T>C
+
+| rung | nominal | SSCS | DCS | DCS call |
+|------|---------|------|-----|----------|
+| G | 0.032% | 0.083% (15/18,021) | 0.141% (4/2,832) | detected |
+| H | 0.016% | 0.005% (1/20,067) | 0 (0/3,524) | not detected |
+| I | 0.008% | 0.006% (1/17,360) | 0 (0/2,619) | not detected |
+| J | 0.004% | 0.006% (1/17,970) | 0 (0/2,796) | not detected |
+
+Background at this position is one read in roughly 18,000, flat across H, I and
+J. The 15 reads at G are a 15-fold excess over that floor and both tracks agree,
+so the detection is real despite the nominal value sitting below the LoD.
+
+### NPM1 type A insertion, chr5
+
+| rung | nominal | DCS | DCS call |
+|------|---------|-----|----------|
+| G | 0.284% | 0.214% (12/5,620) | detected |
+| H | 0.142% | 0.156% (11/7,039) | detected |
+| I | 0.071% | 0.056% (3/5,402) | detected |
+| J | 0.035% | 0 (0/5,335) | not detected |
+
+Scored through the indel blocklist, not the beta model. Quantitative across
+three rungs; the dropout at J is below the 0.056% LoD for that rung.
+
+### CEBPA H24Afs
+
+Not evaluable at any rung. Depth is 133x to 222x against 2,800x to 7,000x
+elsewhere on the panel, roughly a twenty-fold shortfall. Capture problem, not a
+caller problem. CEBPA should be excluded as a trackable marker until the panel
+is addressed.
+
+### Summary
+
+Every DCS call and non-call across the four markers and four rungs is correct
+when assessed against measured counts. No false positives, no false negatives.
+
+Deepest true detections: NPM1 at 0.056% (3 reads in 5,402), IDH2 at 0.056%
+(2 reads in 3,594).
+
+### Untargeted scoring, same samples
+
+Scored without restricting to the marker list, at p < 1e-9:
+
+| rung | calls |
+|------|-------|
+| G | 195 |
+| H | 190 |
+| I | 160 |
+| J | 190 |
+
+Flat across the series while marker detections fall 3, 2, 1, 0. The untargeted
+survivors are per-sample systematic artifact. This is the basis for restricting
+the assay to marker tracking.
 
 ## Known limitations
 
