@@ -42,7 +42,6 @@ ANNOVAR_DB="${ANNOVAR_DB:-/home/patkarlab-clinical/references/humandb}"
 
 # ---- Binaries ----
 ANNEAL="${ANNEAL:-${ANNEAL_ROOT}/target/release/anneal}"
-VARIANT_CALLER="${ANNEAL_ROOT}/mpileup_variant_caller/target/release/call_variants"
 
 # ---- Family size plot script ----
 PLOT_SCRIPT="${ANNEAL_ROOT}/scripts/plot_family_sizes.py"
@@ -65,12 +64,66 @@ USE_GPU="${USE_GPU:-false}"
 
 # ---- Activate conda environment ----
 activate_conda() {
+    # conda's own activation hooks are not written to survive `set -u`; the
+    # dotnet hook installed for Pisces dereferences unset variables. Relax
+    # nounset across activation only, then restore whatever the caller had.
+    local _u_was_set=0
+    case "$-" in *u*) _u_was_set=1; set +u ;; esac
+
     if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
         source "$HOME/miniconda3/etc/profile.d/conda.sh"
     elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
         source "$HOME/anaconda3/etc/profile.d/conda.sh"
     fi
     conda activate "${CONDA_ENV}"
+
+    [ "${_u_was_set}" -eq 1 ] && set -u
     export PATH="${ANNEAL_ROOT}/bin:$PATH"
 }
 PARABRICKS_FLAGS="${PARABRICKS_FLAGS:-}"
+
+# ---- Stage 4: FLT3-ITD ----
+# getITD checkout: git clone https://github.com/tjblaette/getitd.git
+# Requires biopython < 1.84 (Bio.pairwise2 was removed in 1.84).
+GETITD_DIR="${GETITD_DIR:-${HOME}/tools/getitd}"
+
+# Substring of BED column 4 selecting the FLT3 probes to extract. Column 4
+# carries legacy hg19 labels; only the gene/exon name is matched, coordinates
+# are always read from columns 2-3.
+FLT3_PROBE_PATTERN="${FLT3_PROBE_PATTERN:-FLT3_Ex_1[45]}"
+
+# Padding either side of the probe span, to catch reads overhanging the target.
+FLT3_FLANK="${FLT3_FLANK:-300}"
+
+# Below this many consensus reads over FLT3 the locus is not evaluable.
+FLT3_MIN_READS="${FLT3_MIN_READS:-500}"
+
+FLT3_THREADS="${FLT3_THREADS:-8}"
+
+# ---- Stage 2: Pisces ----
+# Pisces 5.2.10.49. It is a .NET 2.0 application; the available runtime is
+# .NET 8, so stage 2 exports DOTNET_ROLL_FORWARD=Major. Compute nodes carry no
+# dotnet on PATH, hence the conda copy.
+PISCES_DLL="${PISCES_DLL:-${HOME}/programs/pisces/Pisces_5.2.10.49/Pisces.dll}"
+DOTNET_DIR="${DOTNET_DIR:-${HOME}/miniconda3/envs/anneal/lib/dotnet}"
+
+# Panel-restricted masked genome plus GenomeSize.xml. Pisces exhausts memory on
+# the full 3,366-contig hg38 reference.
+PISCES_GENOME="${PISCES_GENOME:-${HOME}/references/pisces_hg38_panel}"
+
+# --minbq 30  base-call quality floor. Q60 consensus bases clear it; this is
+#             the parameter that sets the low-VAF detection limit.
+# --minvf 1e-4  minimum variant frequency.
+# --minmq 0   consensus reads are pre-validated, no MAPQ refiltering.
+# -c 1        minimum coverage; depth is high everywhere on the panel.
+PISCES_MINBQ="${PISCES_MINBQ:-30}"
+PISCES_MINMQ="${PISCES_MINMQ:-0}"
+PISCES_MINVF="${PISCES_MINVF:-0.0001}"
+PISCES_MINCOV="${PISCES_MINCOV:-1}"
+
+# ---- Background error model (built from biological negative controls) ----
+# See scripts/background_model/ for how these are regenerated.
+BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.txt}"
+BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.txt}"
+ARTIFACT_MASK="${ARTIFACT_MASK:-${ANNEAL_ROOT}/results_bnc/artifact_mask.combined.bed}"
+INDEL_BLOCKLIST="${INDEL_BLOCKLIST:-${ANNEAL_ROOT}/results_bnc/indel_blocklist.tsv}"

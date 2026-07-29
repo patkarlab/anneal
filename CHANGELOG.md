@@ -1,3 +1,62 @@
+## v0.3.0 - Pisces in stage 2, FLT3-ITD as stage 4
+
+### Fixed
+- **Stage 2 could not run.** It invoked `mpileup_variant_caller`, the Rust
+  caller removed in v0.2.0, so `config.sh` pointed at a binary that no longer
+  existed. Stage 2 now runs Pisces, matching what the documentation already
+  described and what the dilution validation was performed with.
+- `activate_conda()` relaxes `set -u` across conda activation. The dotnet hooks
+  installed for Pisces dereference unset variables and abort any script using
+  `set -euo pipefail`, which silently killed several batch jobs.
+
+### Added
+- **Stage 4: FLT3-ITD** (`--flt3`, or `--stages 4`). Extracts the FLT3 exon
+  14/15 window from the DCS consensus BAM and runs getITD. Output is getITD's
+  own, unfiltered; matching against a patient's known ITD happens downstream.
+  - `-min_read_copies 1`: getITD deduplicates identical reads by default,
+    assuming raw data with PCR duplicates. UMI families already did that.
+  - Primer filtering left on. Nominally an amplicon filter, but on hybrid
+    capture it removes reads with indels near read edges, the main source of
+    spurious ITD calls. Disabling it quadruples usable reads and increases
+    false positives.
+  - Consensus reads are single-end, so getITD receives one FASTQ. Tools
+    requiring paired input, such as FLT3_ITD_ext, cannot read consensus BAMs.
+- `bin/docker` - shim translating anneal's hardcoded `docker run` for
+  Parabricks into `apptainer exec`. Docker is unusable from batch jobs on this
+  cluster (permission denied on the daemon socket); apptainer is not. `bin/` is
+  already prepended to PATH by `activate_conda()`.
+- `scripts/qc_panel.py` - per-gene and per-exon coverage with limit of
+  detection, alongside the existing `coverage_plot.py`.
+
+### Stage 2 notes
+Pisces needs two accommodations, both handled inside the stage:
+- The XV tag is stripped. anneal writes `XV:Z:SSCS` / `XV:Z:DCS` as a string;
+  Pisces expects an integer and throws. Each BAM is single-track, so XV carries
+  nothing Pisces needs.
+- A panel-restricted masked genome (`PISCES_GENOME`) is used. Pisces exhausts
+  memory on the full 3,366-contig hg38 reference.
+
+The interval list is regenerated per sample from the panel BED, so no derived
+file needs to be tracked. Pisces runs on the full consensus BAM - the interval
+list does the restriction, measured at 1.0 GB peak and 25 s per track.
+
+Both a gVCF and a variants-only VCF are written; stage 3 consumes the latter at
+its existing filename.
+
+### Known limitations
+- **FLT3-ITD discovery is not supported.** Untargeted getITD on DCS returns 1-5
+  spurious ITDs per sample with read counts indistinguishable from a true call.
+  On 25NGS1406 the confirmed 63 bp ITD was found at rung G with 9 reads, while
+  artifacts at other rungs carried 5-10. Filter to the patient's known ITD
+  length and insertion site; every artifact observed sat 44-60 bp away.
+- **Long ITDs are invisible to consensus.** Family grouping needs an alignment
+  position, so unmapped reads are dropped: a raw BAM carried 944,067, SSCS and
+  DCS exactly zero. Soft-clipped reads survive at 0.77 the rate of all reads, so
+  ITDs short enough to still align are retained. 63 bp is confirmed; the ceiling
+  above that is untested.
+- getITD reports hg19 coordinates against its own FLT3 reference, while the BAM
+  is queried in the build of `BEDFILE`. Both are correct and they are different
+  coordinate spaces.
 ## v0.2.1 - validation corrected against measured counts
 
 No code change. Corrects the dilution validation recorded in v0.2.0.

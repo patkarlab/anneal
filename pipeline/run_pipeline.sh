@@ -43,6 +43,14 @@ POSITIONAL=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --flt3)
+            if [ -z "${STAGES}" ]; then
+                STAGES="1,2,4"
+            else
+                STAGES="${STAGES},4"
+            fi
+            shift
+            ;;
         --stages)
             STAGES="$2"
             shift 2
@@ -79,6 +87,7 @@ if [ $# -ne 4 ]; then
     echo "Options:"
     echo "  --stages 1,2    Run only these stages (comma-separated)"
     echo "  --annotate      Include stage 3 annotation (stages become 1,2,3)"
+    echo "  --flt3          Include stage 4 FLT3-ITD (stages become 1,2,4)"
     echo "  --skip-vv       Skip VariantValidator in annotation"
     echo ""
     echo "Profiles:"
@@ -133,6 +142,15 @@ if run_stage 3; then
     echo ""
 else
     echo "[SKIP] Stage 3: variant annotation"
+    echo ""
+fi
+
+# ---- Stage 4: FLT3-ITD ----
+if run_stage 4; then
+    bash "${SCRIPT_DIR}/stage4_flt3.sh" "${SAMPLE}" "${OUTPUT_DIR}"
+    echo ""
+else
+    echo "[SKIP] Stage 4: FLT3-ITD"
     echo ""
 fi
 

@@ -22,7 +22,7 @@ below. Orchestration is a set of bash stage scripts driven by a single shared
 | 1 | Consensus generation | `anneal` (Rust) | `{sample}.sscs.sc.sorted.bam`, `{sample}.dcs.sc.sorted.bam`, stats, family sizes |
 | 2 | Variant calling | Pisces 5.2.10.49 | `{sample}.{sscs,dcs}.pisces.genome.vcf` |
 | 3 | Annotation (optional) | VEP + ANNOVAR + VariantValidator | `{sample}.{dcs,sscs}.annotated/filtered/clinical.tsv` |
-| 4 | MRD marker tracking | `call_mrd_markers.py` | `{sample}.mrd_report.tsv` |
+| 4 | FLT3-ITD (optional) | getITD | `{sample}.flt3_itds.tsv` |
 
 Stage 1 internals: barcode extraction -> BWA-MEM2 alignment -> family grouping
 -> SSCS (single-strand consensus) -> singleton correction -> DCS (duplex
@@ -42,12 +42,13 @@ src/                          # Rust consensus engine
   cuda/                       # optional GPU kernels (PTX + .cu)
   manifest.rs                 # manifest subcommand
   main.rs
-mpileup_variant_caller/       # separate Rust crate (call_variants)
 pipeline/
   config.sh                   # shared config -- edit paths here
   stage1_consensus.sh
   stage2_variant_calling.sh
   stage3_annotate.sh          # optional
+  stage4_flt3.sh              # optional, FLT3-ITD via getITD
+  docker-apptainer-shim.sh    # copy to ~/bin/docker; see SETUP_GUIDE
   run_pipeline.sh             # single sample
   run_pipeline_batch.sh       # manifest-driven batch
   launch_pipeline.sh          # background launcher (nohup)
@@ -71,9 +72,12 @@ matter clinically. SSCS maximizes sensitivity; DCS maximizes specificity
 The base-call agreement fraction within a family. 0.6 balances retaining
 real low-frequency signal against over-calling noise; tunable via `--cutoff`.
 
-### Rust variant caller
-Replaces an older Perl mpileup parser, roughly an order of magnitude faster,
-and emits clean VCF with explicit alt-read/depth/VAF fields for MRD work.
+### Pisces as the variant caller
+Chosen over LoFreq, VarDict, Mutect2 and SiNVICT on the dilution series. Two
+accommodations, both inside stage 2: the XV tag is stripped, since anneal writes
+it as a string and Pisces expects an integer; and a panel-restricted masked
+genome is used, since Pisces exhausts memory on the full 3,366-contig hg38
+reference.
 
 ### UMI-aware callers are unnecessary downstream
 Because consensus is already built per UMI family upstream, the Stage 2 caller
@@ -95,10 +99,10 @@ paths derive from it. The variables you actually edit per server:
 ## Build & Run
 
 ```bash
-bash deploy.sh                                   # build anneal (cpu); use `gpu` for CUDA
-cd mpileup_variant_caller && cargo build --release && cd ..
+bash deploy.sh                                   # build anneal (gpu)
 bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/  # stages 1,2
 bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/ --annotate --skip-vv   # + stage 3
+bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/ --flt3                  # + stage 4
 ```
 
 ## Changelog
