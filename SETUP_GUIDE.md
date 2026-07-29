@@ -295,3 +295,54 @@ container). Drop `--skip-vv` once VariantValidator is available.
 /path/to/references/
   hg38_broad/Homo_sapiens_assembly38.fasta  # hg38 + bwa-mem2 indexes
 ```
+
+## GPU alignment: Parabricks
+
+anneal calls Parabricks through a hardcoded `docker run`. On this cluster that
+does not work from batch jobs: the Docker daemon socket is permission-denied on
+the compute nodes. Apptainer is available and is used instead.
+
+### One-off setup
+
+Convert the Parabricks Docker archive to a SIF. No NGC login needed if you
+already have the tar:
+
+    cd ~/pipelines
+    apptainer build parabricks_4.3.1.sif docker-archive://parabricks_4.3.1.tar
+
+Install the shim, which rewrites `docker run` into `apptainer exec`:
+
+    mkdir -p ~/bin
+    cp pipeline/docker-apptainer-shim.sh ~/bin/docker
+    chmod +x ~/bin/docker
+
+### In every batch job
+
+Apptainer is an environment module on the compute nodes and is NOT on the
+default PATH, although it is on the login node. Interactive tests therefore
+pass where batch jobs fail. Load it explicitly:
+
+    module load apptainer/1.5.1
+
+and put the shim ahead of any real docker:
+
+    export PATH="$HOME/bin:$PATH"
+    export PARABRICKS_SIF=$HOME/pipelines/parabricks_4.3.1.sif
+
+Verify before committing to a long run:
+
+    docker run --rm --gpus all --volume "$PWD:/workdir" --workdir /workdir \
+        nvcr.io/nvidia/clara/clara-parabricks:4.3.1-1 pbrun version
+
+This should print `pbrun: 4.3.1-1`. If it reports `apptainer: not found`, the
+module was not loaded.
+
+`jobs/batch_all.pbs` does all of this and fails fast if the check does not pass.
+
+### Fallback
+
+If apptainer is unavailable, set `ALIGNER=bwa` and run alignment on a CPU queue.
+The bwa index for the masked reference already exists; bwa-mem2 would need its
+own index built. Alignment is then roughly 55 minutes per sample instead of
+about 10. Consensus still needs a GPU, so alignment and consensus must be split
+into separate jobs.
