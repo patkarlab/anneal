@@ -85,3 +85,7 @@ jobs/
 
 # job templates carry absolute paths - parameterise against pipeline/config.sh
 jobs/
+
+# batch outputs
+dilution_known_pos/
+all_samples.tsv
