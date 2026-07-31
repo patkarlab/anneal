@@ -84,6 +84,25 @@ for LABEL in dcs sscs; do
         continue
     fi
 
+    # Step 1b: Annotate the indel table, kept separate because it carries
+    # provenance the Pisces path does not - supporting reads, forward and
+    # reverse counts, strand fraction, BNC blocklist recurrence, mask status.
+    # Merging would drop those or force a schema change on both.
+    INDELS="${VARIANT_DIR}/${SAMPLE}.${LABEL}.indels.tsv"
+    if [ -f "${INDELS}" ]; then
+        echo "[$(date '+%H:%M:%S')] Annotating ${LABEL} indels..."
+        python3 "${SCRIPTS_DIR}/annotate_indels.py" \
+            --indels "${INDELS}" \
+            --out "${ANNOTATED_DIR}/${SAMPLE}.${LABEL}.indels.annotated.tsv" \
+            --ref "${REFERENCE_UNMASKED}" \
+            --vep-cache "${VEP_CACHE}" \
+            --annovar-dir "${ANNOVAR_DIR}" \
+            --annovar-db "${ANNOVAR_DB}" 2>&1 \
+            || echo "WARNING: indel annotation failed for ${LABEL}"
+    else
+        echo "NOTE: no indel table for ${LABEL}, run stage 2 first"
+    fi
+
     # Step 2: Filter
     echo "[$(date '+%H:%M:%S')] Filtering ${LABEL}..."
     python3 "${SCRIPTS_DIR}/filter_variants.py" \
