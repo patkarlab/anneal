@@ -54,6 +54,7 @@ fi
     --output "${SAMPLE_DIR}" \
     --aligner "${ALIGNER}" \
     ${PARABRICKS_FLAGS:-} \
+    ${ALIGNER_ARGS:+--aligner-args="${ALIGNER_ARGS}"} \
     --bpattern "${BPATTERN}" \
     --cutoff "${CUTOFF}" \
     ${SC_FLAG} \

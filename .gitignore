@@ -93,3 +93,7 @@ all_samples.tsv
 # batch outputs
 dilution_known_pos/
 all_samples.tsv
+
+# job logs
+anneal_all.*.log
+annot_rerun.*.log

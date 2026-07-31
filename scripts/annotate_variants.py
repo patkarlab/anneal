@@ -21,7 +21,7 @@ Usage:
         -o results/SAMPLE/annotated
 
 Requires:
-  - VEP in conda env 'vep': conda run -n vep vep ...
+  - VEP: $VEP_BIN, default ~/miniconda3/envs/vep/bin/vep
   - ANNOVAR: table_annovar.pl
   - ANNOVAR hg38 databases: refGene, cosmic103, gnomad30_genome,
     clinvar_20220320, avsnp150
@@ -106,12 +106,33 @@ def parse_args():
     return ap.parse_args()
 
 
-def run(cmd, desc=None, shell=False):
+# Conda env bin directories whose perl would shadow VEP's own. VEP loads its
+# modules relative to whichever perl is found first on PATH, so any of these
+# appearing ahead of the vep env breaks every module load.
+VEP_PATH_STRIP = ("envs/targeted-seq/bin", "envs/anneal/bin")
+
+# Perl library variables that leak in from an activated env and misdirect VEP.
+VEP_PERL_VARS = ("PERL5LIB", "PERL_LOCAL_LIB_ROOT", "PERL_MM_OPT", "PERL_MB_OPT")
+
+
+def vep_environment():
+    """A copy of the current environment safe for VEP to run in."""
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not any(s in p for s in VEP_PATH_STRIP))
+    for v in VEP_PERL_VARS:
+        env.pop(v, None)
+    return env
+
+
+def run(cmd, desc=None, shell=False, env=None):
     if desc:
         log.info("%s", desc)
     cmd_str = cmd if shell else " ".join(cmd)
     log.info("  cmd: %s", cmd_str)
-    result = subprocess.run(cmd, capture_output=True, text=True, shell=shell)
+    result = subprocess.run(cmd, capture_output=True, text=True, shell=shell,
+                            env=env)
     if result.returncode != 0:
         log.error("  FAILED (exit %d)", result.returncode)
         for line in (result.stderr or "").strip().splitlines()[-10:]:
@@ -121,7 +142,15 @@ def run(cmd, desc=None, shell=False):
 
 def run_vep(vcf_in, vcf_out, reference, fork, vep_cache):
     cmd = [
-        "conda", "run", "-n", "vep", "vep",
+        # Must go through `conda run` so VEP gets its own perl. Calling the
+        # binary directly leaves the active env's perl on PATH, which shadows
+        # VEP's modules. `-p <prefix>` rather than `-n <name>` because a
+        # subprocess does not inherit conda's env-path config and `-n vep`
+        # resolves to ~/.conda/envs/vep, which does not exist.
+        "conda", "run", "-p",
+        os.environ.get("VEP_PREFIX",
+                       os.path.expanduser("~/miniconda3/envs/vep")),
+        "vep",
         "--input_file", vcf_in,
         "--output_file", vcf_out,
         "--vcf",
@@ -489,10 +518,20 @@ def prefilter_vcf(vcf_in, vcf_out, min_alt):
                 dropped += 1
                 continue
             fmt = dict(zip(cols[8].split(":"), cols[9].split(":")))
-            try:
-                alt_count = int(fmt.get("ALT", "0"))
-            except ValueError:
-                alt_count = 0
+            # Pisces writes counts in AD as "ref,alt"; the retired Rust caller
+            # used a bare ALT field. Try both so either VCF flavour works.
+            alt_count = 0
+            ad = fmt.get("AD", "")
+            if "," in ad:
+                try:
+                    alt_count = int(ad.split(",")[1])
+                except (ValueError, IndexError):
+                    alt_count = 0
+            if alt_count == 0 and "ALT" in fmt:
+                try:
+                    alt_count = int(fmt["ALT"])
+                except ValueError:
+                    alt_count = 0
             if alt_count >= min_alt:
                 fout.write(line)
                 kept += 1

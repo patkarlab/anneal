@@ -127,3 +127,17 @@ BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.t
 BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.txt}"
 ARTIFACT_MASK="${ARTIFACT_MASK:-${ANNEAL_ROOT}/results_bnc/artifact_mask.combined.bed}"
 INDEL_BLOCKLIST="${INDEL_BLOCKLIST:-${ANNEAL_ROOT}/results_bnc/indel_blocklist.tsv}"
+
+# ---- Extra arguments passed straight to the aligner ----
+# Parabricks defaults to every GPU the driver reports. Apptainer's --nv honours
+# the PBS ngpus allocation, so CUDA sees fewer devices than Parabricks asks for
+# and pbrun aborts with "Number of GPUs requested (2) is more than number of
+# GPUs (1) in the system". Docker's --gpus all exposed both, which is why this
+# did not surface before the move to apptainer.
+ALIGNER_ARGS="${ALIGNER_ARGS:---num-gpus 1}"
+
+# ---- Indel scanning (stage 2, alongside Pisces) ----
+# Anchor and deleted bases are read from real sequence, so this must be the
+# UNMASKED reference, not the masked copy used for alignment.
+REFERENCE_UNMASKED="${REFERENCE_UNMASKED:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.fasta}"
+INDEL_MIN_ALT="${INDEL_MIN_ALT:-2}"

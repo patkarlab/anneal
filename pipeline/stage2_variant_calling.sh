@@ -105,6 +105,30 @@ call_variants() {
     echo "[$(date '+%H:%M:%S')] ${SAMPLE} ${label}: ${n_all} variants (${n_pass} PASS) -> ${vcf}"
 
     rm -rf "${outdir}" "${pbam}" "${pbam}.bai" "${intervals}"
+
+    # ---- Indels: counted from the BAM, not from Pisces ----
+    # Pisces cannot report indels at MRD frequencies. Its variant Q-score model
+    # treats indels as higher-error than substitutions: the NPM1 type A
+    # insertion in 25NGS1071 (20 reads in 50,462, 0.040%) scores VQ 0 and is
+    # dropped at the default --minvq 20. Lowering it does not help
+    # incrementally - minvq 5, 10 and 15 all miss it, and only minvq 0 recovers
+    # it, which inflates the call set 22x and turns the caller into a pileup
+    # dump. The lowest indel Pisces reports is 0.128%, against a substitution
+    # floor near 0.01%. It also places insertions ambiguously in tandem
+    # repeats. So indels come straight off the CIGARs.
+    local indels="${VARIANT_DIR}/${SAMPLE}.${label}.indels.tsv"
+    echo "[$(date '+%H:%M:%S')] ${SAMPLE} ${label}: scanning indels..."
+    python "${ANNEAL_ROOT}/scripts/scan_indels.py" \
+        --sample "${SAMPLE}" \
+        --bam "${bam}" \
+        --track "${label}" \
+        --bed "${BEDFILE}" \
+        --ref "${REFERENCE_UNMASKED}" \
+        --min-alt "${INDEL_MIN_ALT}" \
+        ${INDEL_BLOCKLIST:+--indel-blocklist "${INDEL_BLOCKLIST}"} \
+        ${ARTIFACT_MASK:+--mask "${ARTIFACT_MASK}"} \
+        --out "${indels}" \
+        || echo "WARNING: indel scan failed for ${SAMPLE} ${label}"
 }
 
 for label in sscs dcs; do
