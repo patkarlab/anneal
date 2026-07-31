@@ -97,3 +97,7 @@ all_samples.tsv
 # job logs
 anneal_all.*.log
 annot_rerun.*.log
+
+# editor settings are per-machine
+.vscode/
+indel_rerun.*.log
