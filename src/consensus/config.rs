@@ -28,6 +28,11 @@ pub struct ConsensusConfig {
 
     /// Enable singleton correction workflow.
     pub singleton_correction: bool,
+
+    /// Minimum number of reads required on EACH strand before a DCS is
+    /// formed. 1 reproduces the previous permissive behaviour; 2 or more
+    /// enforces genuine two-sided duplex support.
+    pub min_reads_per_strand: usize,
 }
 
 impl Default for ConsensusConfig {
@@ -40,6 +45,7 @@ impl Default for ConsensusConfig {
             use_gpu: false,
             gpu_device: 0,
             singleton_correction: true,
+            min_reads_per_strand: 1,
         }
     }
 }

@@ -402,6 +402,11 @@ fn run_stage2(
         use_gpu: gpu_available,
         gpu_device,
         singleton_correction,
+        min_reads_per_strand: std::env::var("ANNEAL_MIN_READS_PER_STRAND")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v >= 1)
+            .unwrap_or(1),
     };
 
     consensus::pipeline::run_consensus(input, output, bedfile.map(|p| p.as_path()), &config)

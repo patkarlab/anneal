@@ -125,8 +125,8 @@ pub fn build_family_tag(
     };
 
     format!(
-        "{}_{}_{}_{}_{}_{}_{}", 
-        barcode, chr1, start1, chr2, start2, strand, read_num
+        "{}_{}_{}_{}_{}_{}_{}_{}", 
+        barcode, chr1, start1, chr2, start2, cigar, strand, read_num
     )
 }
 
@@ -238,9 +238,9 @@ mod tests {
 
     #[test]
     fn test_duplex_complement_tag() {
-        let tag = "ACG+TTT_chr1_100_chr1_200_pos_R1";
+        let tag = "ACG+TTT_chr1_100_chr1_200_100M_pos_R1";
         let complement = build_duplex_complement_tag(tag).unwrap();
-        assert_eq!(complement, "TTT+ACG_chr1_100_chr1_200_neg_R2");
+        assert_eq!(complement, "TTT+ACG_chr1_100_chr1_200_100M_neg_R2");
     }
 
     #[test]

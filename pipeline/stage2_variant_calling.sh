@@ -117,6 +117,9 @@ call_variants() {
     # floor near 0.01%. It also places insertions ambiguously in tandem
     # repeats. So indels come straight off the CIGARs.
     local indels="${VARIANT_DIR}/${SAMPLE}.${label}.indels.tsv"
+    # Track-matched blocklist, falling back to the single-variable form.
+    local bl_var="INDEL_BLOCKLIST_${label^^}"
+    local bl="${!bl_var:-${INDEL_BLOCKLIST:-}}"
     echo "[$(date '+%H:%M:%S')] ${SAMPLE} ${label}: scanning indels..."
     python "${ANNEAL_ROOT}/scripts/scan_indels.py" \
         --sample "${SAMPLE}" \
@@ -125,7 +128,7 @@ call_variants() {
         --bed "${BEDFILE}" \
         --ref "${REFERENCE_UNMASKED}" \
         --min-alt "${INDEL_MIN_ALT}" \
-        ${INDEL_BLOCKLIST:+--indel-blocklist "${INDEL_BLOCKLIST}"} \
+        ${bl:+--indel-blocklist "${bl}"} \
         ${ARTIFACT_MASK:+--mask "${ARTIFACT_MASK}"} \
         --out "${indels}" \
         || echo "WARNING: indel scan failed for ${SAMPLE} ${label}"

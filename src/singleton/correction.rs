@@ -67,10 +67,15 @@ pub fn correct_singletons(
                 };
 
                 // Duplex-correct using the SSCS
-                let corrected = call_duplex_consensus_cpu(
+                let mut corrected = call_duplex_consensus_cpu(
                     &singleton_consensus,
                     &complement_sscs.consensus,
                 );
+                // call_duplex_consensus_cpu returns the SUM of both strands'
+                // family sizes. This strand contributed exactly one read; if
+                // the sum is kept it is summed a second time at DCS formation
+                // and a 1-read strand surfaces as a large XW. Report the truth.
+                corrected.family_size = 1;
 
                 sscs_rescued.push(SscsRead {
                     tag: singleton.tag.clone(),
@@ -131,7 +136,8 @@ pub fn correct_singletons(
                         proportions: vec![1.0; s2.reads[0].sequence.len()],
                         family_size: 1,
                     };
-                    let corrected = call_duplex_consensus_cpu(&c1, &c2);
+                    let mut corrected = call_duplex_consensus_cpu(&c1, &c2);
+                    corrected.family_size = 1;
 
                     singleton_rescued.push(SscsRead {
                         tag: tag.clone(),

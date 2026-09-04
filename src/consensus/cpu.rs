@@ -8,6 +8,10 @@
 
 use crate::grouping::families::ReadData;
 
+/// Minimum per-strand consensus quality for a duplex base to be called.
+/// Both strands must clear this independently.
+pub const DUPLEX_MIN_QUAL: u8 = 30;
+
 /// Base encoding for efficient counting.
 /// A=0, C=1, G=2, T=3, N=4
 #[inline]
@@ -151,7 +155,9 @@ pub fn call_consensus_cpu(
 /// At each position:
 ///   - If both strands agree, use that base with summed quality
 ///   - If they disagree, call N with quality 0
-///   - If one strand has N, use the other strand's base
+///   - If either strand is N, or either strand is below DUPLEX_MIN_QUAL,
+///     call N. There is no gap-fill: a base carried by only one strand
+///     is not a duplex observation.
 pub fn call_duplex_consensus_cpu(
     sscs_pos: &ConsensusResult,
     sscs_neg: &ConsensusResult,
@@ -167,35 +173,24 @@ pub fn call_duplex_consensus_cpu(
         let qual_pos = sscs_pos.qualities.get(i).copied().unwrap_or(0);
         let qual_neg = sscs_neg.qualities.get(i).copied().unwrap_or(0);
 
-        match (base_pos, base_neg) {
-            (b'N', b'N') => {
-                sequence.push(b'N');
-                qualities.push(0);
-                proportions.push(0.0);
-            }
-            (b'N', b) => {
-                sequence.push(b);
-                qualities.push(qual_neg);
-                proportions.push(0.5);
-            }
-            (b, b'N') => {
-                sequence.push(b);
-                qualities.push(qual_pos);
-                proportions.push(0.5);
-            }
-            (a, b) if a == b => {
-                sequence.push(a);
-                // Sum qualities, cap at 60
-                let combined_qual = (qual_pos as u16 + qual_neg as u16).min(60) as u8;
-                qualities.push(combined_qual);
-                proportions.push(1.0);
-            }
-            (_, _) => {
-                // Disagreement between strands
-                sequence.push(b'N');
-                qualities.push(0);
-                proportions.push(0.0);
-            }
+        // Strict duplex. A base is emitted only when both strands
+        // independently call the same non-N base at or above the quality
+        // floor. Every other case -- disagreement, N on either strand,
+        // low quality on either strand -- is N.
+        let both_support = base_pos == base_neg
+            && base_pos != b'N'
+            && qual_pos >= DUPLEX_MIN_QUAL
+            && qual_neg >= DUPLEX_MIN_QUAL;
+
+        if both_support {
+            let combined_qual = (qual_pos as u16 + qual_neg as u16).min(60) as u8;
+            sequence.push(base_pos);
+            qualities.push(combined_qual);
+            proportions.push(1.0);
+        } else {
+            sequence.push(b'N');
+            qualities.push(0);
+            proportions.push(0.0);
         }
     }
 

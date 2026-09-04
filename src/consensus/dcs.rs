@@ -22,10 +22,14 @@ pub struct DcsRead {
     pub tag: String,
     pub consensus: crate::consensus::cpu::ConsensusResult,
     pub representative: ReadMetadata,
+    /// Reads supporting the (+) strand SSCS of this duplex.
+    pub fam_a: usize,
+    /// Reads supporting the (-) strand SSCS of this duplex.
+    pub fam_b: usize,
 }
 
 /// Generate DCS by pairing complementary SSCS reads.
-pub fn generate_dcs(sscs_reads: Vec<SscsRead>, _config: &ConsensusConfig) -> DcsResult {
+pub fn generate_dcs(sscs_reads: Vec<SscsRead>, config: &ConsensusConfig) -> DcsResult {
     debug!("Pairing {} SSCS reads for DCS", sscs_reads.len());
 
     // Index by tag
@@ -51,20 +55,31 @@ pub fn generate_dcs(sscs_reads: Vec<SscsRead>, _config: &ConsensusConfig) -> Dcs
             continue;
         }
 
+        let a = by_tag.get(tag).unwrap();
+        let b = by_tag.get(&comp).unwrap();
+        let fam_a = a.consensus.family_size;
+        let fam_b = b.consensus.family_size;
+
+        // Strict duplex: both strands must independently carry enough reads.
+        // A 20+1 pairing is one strand plus an anecdote, not duplex evidence.
+        // Leave both tags unpaired so they fall through to sscs.singleton.
+        if fam_a < config.min_reads_per_strand || fam_b < config.min_reads_per_strand {
+            continue;
+        }
+
         // Mark both as paired
         paired.insert(tag.clone());
         paired.insert(comp.clone());
 
-        // Call duplex consensus
-        let a = by_tag.get(tag).unwrap();
-        let b = by_tag.get(&comp).unwrap();
         let duplex = call_duplex_consensus_cpu(&a.consensus, &b.consensus);
-        let dcs_tag = format!("{}:{}+{}:{}", tag, a.consensus.family_size, comp, b.consensus.family_size);
+        let dcs_tag = format!("{}:{}+{}:{}", tag, fam_a, comp, fam_b);
 
         dcs_reads.push(DcsRead {
             tag: dcs_tag,
             consensus: duplex,
             representative: a.representative.clone(),
+            fam_a,
+            fam_b,
         });
     }
 

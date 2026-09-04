@@ -126,6 +126,12 @@ PISCES_MINCOV="${PISCES_MINCOV:-1}"
 BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.txt}"
 BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.txt}"
 ARTIFACT_MASK="${ARTIFACT_MASK:-${ANNEAL_ROOT}/results_bnc/artifact_mask.combined.bed}"
+# Track-matched indel blocklists. SSCS artifacts that are strand-specific do
+# not survive into DCS (C>A falls 29x between tracks), so applying an SSCS
+# blocklist to DCS over-filters at TP53, RUNX1, GATA2 and STAG2 hot spots.
+INDEL_BLOCKLIST_SSCS="${INDEL_BLOCKLIST_SSCS:-${ANNEAL_ROOT}/results_bnc/indel_blocklist.SSCS.patched.tsv}"
+INDEL_BLOCKLIST_DCS="${INDEL_BLOCKLIST_DCS:-${ANNEAL_ROOT}/results_bnc/indel_blocklist.DCS.patched.tsv}"
+# Fallback for anything still reading the single-variable form.
 INDEL_BLOCKLIST="${INDEL_BLOCKLIST:-${ANNEAL_ROOT}/results_bnc/indel_blocklist.tsv}"
 
 # ---- Extra arguments passed straight to the aligner ----

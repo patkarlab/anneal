@@ -393,7 +393,7 @@ fn write_dcs_sam(w: &mut impl Write, dcs: &dcs::DcsRead) -> Result<()> {
 
     writeln!(
         w,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\tXV:Z:DCS\tXW:i:{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\tXV:Z:DCS\tXW:i:{}\tXA:i:{}\tXB:i:{}",
         dcs.tag,
         dcs.representative.flag,
         rname,
@@ -406,6 +406,8 @@ fn write_dcs_sam(w: &mut impl Write, dcs: &dcs::DcsRead) -> Result<()> {
         seq,
         qual,
         dcs.consensus.family_size,
+        dcs.fam_a,
+        dcs.fam_b,
     )?;
     Ok(())
 }
