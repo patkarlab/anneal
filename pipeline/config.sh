@@ -50,7 +50,7 @@ PLOT_SCRIPT="${ANNEAL_ROOT}/scripts/plot_family_sizes.py"
 CONDA_ENV="anneal"
 
 # ---- Anneal consensus parameters ----
-ALIGNER="${ALIGNER:-bwa-mem2}"
+ALIGNER="${ALIGNER:-parabricks}"
 BPATTERN="NNNSS"
 CUTOFF=0.6
 SINGLETON_CORRECTION=true
@@ -80,7 +80,7 @@ activate_conda() {
     [ "${_u_was_set}" -eq 1 ] && set -u
     export PATH="${ANNEAL_ROOT}/bin:$PATH"
 }
-PARABRICKS_FLAGS="${PARABRICKS_FLAGS:-}"
+PARABRICKS_FLAGS="${PARABRICKS_FLAGS:---parabricks-docker}"
 
 # ---- Stage 4: FLT3-ITD ----
 # getITD checkout: git clone https://github.com/tjblaette/getitd.git
