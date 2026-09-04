@@ -104,3 +104,4 @@ indel_rerun.*.log
 dilutions_output/
 logs_*/
 *.bak.*
+logs/
