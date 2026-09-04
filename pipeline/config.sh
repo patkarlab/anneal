@@ -28,7 +28,7 @@ SEQUENCES_DIR="/home/patkarlab-clinical/pipelines/anneal/sample_fastq"
 RESULTS_DIR="/home/patkarlab-clinical/pipelines/anneal/results"
 
 # ---- Reference genome (U2AF1-fixed hg38 from targeted-seq-pipeline) ----
-REFERENCE="${REFERENCE:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.masked.fasta}"
+REFERENCE="${REFERENCE:-/home/patkarlab-clinical/references/hg38_broad_bwa/Homo_sapiens_assembly38.masked.fasta}"
 
 # ---- Target panel BED file ----
 BEDFILE="${ANNEAL_ROOT}/AML_MRD_DUPLEX_probes_hg38_sortd.bed"
@@ -41,7 +41,7 @@ ANNOVAR_DIR="${ANNOVAR_DIR:-/home/patkarlab-clinical/programs/annovar}"
 ANNOVAR_DB="${ANNOVAR_DB:-/home/patkarlab-clinical/references/humandb}"
 
 # ---- Binaries ----
-ANNEAL="${ANNEAL:-${ANNEAL_ROOT}/target/release/anneal}"
+ANNEAL="${ANNEAL:-${ANNEAL_ROOT}/target_cpu/release/anneal}"
 
 # ---- Family size plot script ----
 PLOT_SCRIPT="${ANNEAL_ROOT}/scripts/plot_family_sizes.py"
@@ -123,8 +123,8 @@ PISCES_MINCOV="${PISCES_MINCOV:-1}"
 
 # ---- Background error model (built from biological negative controls) ----
 # See scripts/background_model/ for how these are regenerated.
-BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.txt}"
-BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.txt}"
+BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.patched.txt}"
+BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.patched.txt}"
 ARTIFACT_MASK="${ARTIFACT_MASK:-${ANNEAL_ROOT}/results_bnc/artifact_mask.combined.bed}"
 # Track-matched indel blocklists. SSCS artifacts that are strand-specific do
 # not survive into DCS (C>A falls 29x between tracks), so applying an SSCS
