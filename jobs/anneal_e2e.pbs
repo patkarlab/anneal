@@ -1,0 +1,66 @@
+#!/bin/bash
+#PBS -N anneal_e2e
+#PBS -q A40b
+#PBS -l select=1:ncpus=16:ngpus=1:mem=100gb
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/
+
+# End-to-end validation of the frozen pipeline through the front door:
+# one sample, FASTQ to stage 5, run_pipeline.sh with no overrides. Stage 1
+# aligns with Parabricks on the GPU; stages 2-5 run on the same node.
+# Output goes to dilution_v030/ so that dilution_patched/ (the by-hand
+# runs of 27 Aug) remains the comparator.
+#
+#   qsub -v FULL=25NGS1145-Duplex_S2 jobs/anneal_e2e.pbs
+#   qsub -v FULL=25NGS1734-Duplex_S3 jobs/anneal_e2e.pbs
+#
+# Each stage 1 needs 100-184 GB transient on /scratch; alignment/ is removed
+# on success only, so a failed run leaves its files for inspection.
+
+ANNEAL_ROOT=/home/patkarlab-clinical/pipelines/anneal
+cd "${ANNEAL_ROOT}"
+source pipeline/config.sh
+activate_conda
+module load apptainer/1.5.1
+
+FULL="${FULL:?submit with -v FULL=<sample>_S<n>, e.g. 25NGS1145-Duplex_S2}"
+NAME="${FULL%_S*}"
+FQ=/scratch/patkarlab-clinical/Duplex_dilutions
+OUT=/scratch/patkarlab-clinical/dilution_v030
+R1="${FQ}/${FULL}_R1_001.fastq.gz"
+R2="${FQ}/${FULL}_R2_001.fastq.gz"
+
+echo "sample:  ${NAME}"
+echo "host:    $(hostname)"
+echo "commit:  $(git -C "${ANNEAL_ROOT}" describe --tags --always)"
+echo "binary:  ${ANNEAL}"
+echo "aligner: ${ALIGNER} ${PARABRICKS_FLAGS} ${ALIGNER_ARGS}"
+echo "start:   $(date)"
+for f in "${R1}" "${R2}"; do
+    [ -f "${f}" ] || { echo "ERROR: missing ${f}"; exit 1; }
+done
+
+# Quota gate: /scratch is shared with other work; abort cleanly rather than
+# take the account over the hard limit mid-alignment.
+used=$(lfs quota -u "$USER" /scratch 2>/dev/null | awk 'NR==3{gsub(/\*/,"",$2); print $2}')
+hard=$(lfs quota -u "$USER" /scratch 2>/dev/null | awk 'NR==3{print $4}')
+free_gb=$(( (hard - used) / 1048576 ))
+echo "scratch headroom: ${free_gb} GB"
+if [ "${free_gb}" -lt 220 ]; then
+    echo "ERROR: less than 220 GB free on /scratch; not starting"
+    exit 75
+fi
+mkdir -p "${OUT}"
+
+bash pipeline/run_pipeline.sh "${NAME}" "${R1}" "${R2}" "${OUT}" --stages 1,2,3,4,5
+rc=$?
+echo "run_pipeline exit: ${rc}   end: $(date)"
+
+if [ "${rc}" -eq 0 ]; then
+    rm -rf "${OUT}/${NAME}/alignment"
+    echo "alignment/ removed"
+fi
+du -sh "${OUT}/${NAME}" 2>/dev/null
+ls "${OUT}/${NAME}"/scored/ 2>/dev/null
+exit "${rc}"

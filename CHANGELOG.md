@@ -99,6 +99,13 @@ sensitivity" with both counts. SSCS is not quantitative (NPM1 SSCS 0.28 ->
 0.094 -> 0.17 -> 0.019 while DCS halves cleanly) and is damage-prone for
 C>T/G>A near its limit (IDH2 SSCS: I 0.020% ND, J 0.044% DET).
 
+### Front-door reproduction
+25NGS1145 run from FASTQ through `run_pipeline.sh --stages 1,2,3,4,5` on
+`v0.3.0` with no overrides (`jobs/anneal_e2e.pbs`, A40, 100 min): consensus
+statistics identical to the 27 Aug by-hand run (246,401,504 reads, 295,090
+rescued, 788,886 DCS), Stage 5 identical (155 candidates, 54 DETECTED, no
+differing call, NPM1 4/6526).
+
 ### Known issues
 - CEBPA probe delivers 130-220x DCS: non-evaluable at every rung. Panel.
 - TP53 chr17:7676341 T>C: controls disagree (5-15%), fitted concentration
