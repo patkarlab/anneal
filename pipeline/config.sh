@@ -147,3 +147,7 @@ ALIGNER_ARGS="${ALIGNER_ARGS:---num-gpus 1}"
 # UNMASKED reference, not the masked copy used for alignment.
 REFERENCE_UNMASKED="${REFERENCE_UNMASKED:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.fasta}"
 INDEL_MIN_ALT="${INDEL_MIN_ALT:-2}"
+
+# ---- Stage 5: background scoring ----
+SCORE_TRACKS="${SCORE_TRACKS:-dcs sscs}"
+INDEL_MIN_CONTROLS="${INDEL_MIN_CONTROLS:-6}"
