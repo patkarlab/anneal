@@ -21,7 +21,7 @@ Reports the two numbers that decide whether the duplex step is working.
 Usage:
     python3 measure_duplex.py <sample_dir> [--ref PATH] [--bed PATH]
 
-    e.g. python3 measure_duplex.py results_dilution_gpu/25NGS1601-G-Duplex
+    e.g. python3 measure_duplex.py results_dilution_gpu/DIL-A-G-Duplex
 """
 
 import argparse

@@ -16,7 +16,7 @@
 #
 # Manifest format (tab-separated, header required):
 #   sample_name    fastq1                                 fastq2
-#   25NGS1071      /path/to/25NGS1071_R1.fastq.gz         /path/to/25NGS1071_R2.fastq.gz
+#   DX-2      /path/to/DX-2_R1.fastq.gz         /path/to/DX-2_R2.fastq.gz
 #
 # Generate a manifest with:
 #   anneal manifest --dir /path/to/fastqs/ -o manifest.tsv

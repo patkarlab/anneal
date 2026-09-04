@@ -109,7 +109,7 @@ call_variants() {
     # ---- Indels: counted from the BAM, not from Pisces ----
     # Pisces cannot report indels at MRD frequencies. Its variant Q-score model
     # treats indels as higher-error than substitutions: the NPM1 type A
-    # insertion in 25NGS1071 (20 reads in 50,462, 0.040%) scores VQ 0 and is
+    # insertion in DX-2 (20 reads in 50,462, 0.040%) scores VQ 0 and is
     # dropped at the default --minvq 20. Lowering it does not help
     # incrementally - minvq 5, 10 and 15 all miss it, and only minvq 0 recovers
     # it, which inflates the call set 22x and turns the caller into a pileup

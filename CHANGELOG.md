@@ -2,13 +2,13 @@
 
 Validated release: corrected duplex engine, rebuilt background model, and a
 scoring stage. Every number below was reproduced through `run_pipeline.sh` on
-the 25NGS1601 two-fold dilution series (G, H, I, J).
+the DIL-A two-fold dilution series (G, H, I, J).
 
 ### Consensus engine (commit 691a92f)
 - Four defects fixed: CIGAR restored to the family key; duplex consensus
   requires both strands to call the same non-N base at >= Q30 (no gap-fill);
   rescued singletons report family_size 1; per-strand depth emitted as
-  `XA`/`XB`. DCS error rate on 25NGS1601-G 2.903e-04 -> 7.635e-05 at -1.1%
+  `XA`/`XB`. DCS error rate on DIL-A-G 2.903e-04 -> 7.635e-05 at -1.1%
   depth; C>A (8-oxoG) 2.939e-05 -> 1.000e-06. Eight BNCs: DCS 6.22e-05,
   CV 12.4%.
 - Tiering by min(XA, XB) is flat: `ANNEAL_MIN_READS_PER_STRAND` stays 1 and
@@ -67,7 +67,7 @@ the 25NGS1601 two-fold dilution series (G, H, I, J).
 - Marker overlay stays a post-hoc `call_mrd_markers.py` run with the
   patient's diagnosis list. Nothing in stages 1-5 reads that list.
 
-### Validation: 25NGS1601, two-fold series, DCS (reported track)
+### Validation: DIL-A, two-fold series, DCS (reported track)
 
 | marker        | G                    | H                            | I                        | J                        |
 |---------------|----------------------|------------------------------|--------------------------|--------------------------|
@@ -100,7 +100,7 @@ sensitivity" with both counts. SSCS is not quantitative (NPM1 SSCS 0.28 ->
 C>T/G>A near its limit (IDH2 SSCS: I 0.020% ND, J 0.044% DET).
 
 ### Front-door reproduction
-25NGS1145 run from FASTQ through `run_pipeline.sh --stages 1,2,3,4,5` on
+DX-1 run from FASTQ through `run_pipeline.sh --stages 1,2,3,4,5` on
 `v0.3.0` with no overrides (`jobs/anneal_e2e.pbs`, A40, 100 min): consensus
 statistics identical to the 27 Aug by-hand run (246,401,504 reads, 295,090
 rescued, 788,886 DCS), Stage 5 identical (155 candidates, 54 DETECTED, no
@@ -119,7 +119,7 @@ differing call, NPM1 4/6526).
   support as the resolved allele. Excluded at candidate build, not yet at
   source. `strand_frac` in the indel table is read orientation, not strand
   of origin.
-- 25NGS1734 stage 1 outstanding (/scratch quota during alignment).
+- DX-3 stage 1 outstanding (/scratch quota during alignment).
 - Depth: ~2,800x DCS gives a 3-molecule limit near 0.1%; 0.05% needs
   ~6,000x. Run the saturation test (1601-G subsampled to 50% and 25%)
   before the next sequencing batch.
@@ -171,7 +171,7 @@ its existing filename.
 ### Known limitations
 - **FLT3-ITD discovery is not supported.** Untargeted getITD on DCS returns 1-5
   spurious ITDs per sample with read counts indistinguishable from a true call.
-  On 25NGS1406 the confirmed 63 bp ITD was found at rung G with 9 reads, while
+  On DIL-B the confirmed 63 bp ITD was found at rung G with 9 reads, while
   artifacts at other rungs carried 5-10. Filter to the patient's known ITD
   length and insertion site; every artifact observed sat 44-60 bp away.
 - **Long ITDs are invisible to consensus.** Family grouping needs an alignment
@@ -187,7 +187,7 @@ its existing filename.
 No code change. Corrects the dilution validation recorded in v0.2.0.
 
 ### Corrected
-- The 25NGS1601 series is a two-fold serial dilution, not five-fold. The
+- The DIL-A series is a two-fold serial dilution, not five-fold. The
   previously reported "PTPN11 steps 4.95x against a nominal 5x" was a
   coincidence read as a result.
 - Expected VAFs on the dilution worksheet are nominal, derived from dilution
@@ -243,7 +243,7 @@ discovery at MRD sensitivity is explicitly out of scope.
   accessions and diagnosis variant coordinates and must not be published.
 
 ### Validation
-Sample 25NGS1601, 1/5 serial dilution across four rungs. Markers detected fall
+Sample DIL-A, 1/5 serial dilution across four rungs. Markers detected fall
 3 to 2 to 1 to 0 across the series while untargeted calls at the same threshold
 stay flat at 195, 190, 160, 190 - establishing that untargeted survivors are
 per-sample artifact and that marker tracking is the supported mode. Every marker

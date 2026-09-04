@@ -230,7 +230,7 @@ than the current configuration delivers.
 
 ## Dilution validation
 
-Sample 25NGS1601, two-fold serial dilution across four rungs (G to J).
+Sample DIL-A, two-fold serial dilution across four rungs (G to J).
 
 The expected VAFs recorded on the dilution worksheet are nominal, calculated
 from dilution factors rather than measured. They run 1.5x to 4x away from

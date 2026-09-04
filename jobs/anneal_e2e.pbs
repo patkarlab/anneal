@@ -12,8 +12,8 @@
 # Output goes to dilution_v030/ so that dilution_patched/ (the by-hand
 # runs of 27 Aug) remains the comparator.
 #
-#   qsub -v FULL=25NGS1145-Duplex_S2 jobs/anneal_e2e.pbs
-#   qsub -v FULL=25NGS1734-Duplex_S3 jobs/anneal_e2e.pbs
+#   qsub -v FULL=<diagnostic sample>_S<n> jobs/anneal_e2e.pbs
+#   qsub -v FULL=<diagnostic sample>_S<n> jobs/anneal_e2e.pbs
 #
 # Each stage 1 needs 100-184 GB transient on /scratch; alignment/ is removed
 # on success only, so a failed run leaves its files for inspection.
@@ -24,7 +24,7 @@ source pipeline/config.sh
 activate_conda
 module load apptainer/1.5.1
 
-FULL="${FULL:?submit with -v FULL=<sample>_S<n>, e.g. 25NGS1145-Duplex_S2}"
+FULL="${FULL:?submit with -v FULL=<sample>_S<n>, e.g. <diagnostic sample>_S<n>}"
 NAME="${FULL%_S*}"
 FQ=/scratch/patkarlab-clinical/Duplex_dilutions
 OUT=/scratch/patkarlab-clinical/dilution_v030

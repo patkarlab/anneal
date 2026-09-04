@@ -248,7 +248,7 @@ fn parse_fastq_name(filename: &str) -> Option<(String, ReadNumber)> {
 
 /// Derive a clean sample name from the pairing key.
 ///
-/// "25NGS1071-Duplex_S1_L001" -> "25NGS1071-Duplex"
+/// "DX-2-Duplex_S1_L001" -> "DX-2-Duplex"
 /// Strips _S\d+, _L\d+ Illumina suffixes for cleaner naming.
 fn clean_sample_name(key: &str) -> String {
     let mut name = key.to_string();
@@ -314,13 +314,13 @@ mod tests {
     #[test]
     fn test_parse_illumina_standard() {
         let (key, read) =
-            parse_fastq_name("25NGS1071-Duplex_S1_L001_R1_001.fastq.gz").unwrap();
-        assert_eq!(key, "25NGS1071-Duplex_S1_L001");
+            parse_fastq_name("DX-2-Duplex_S1_L001_R1_001.fastq.gz").unwrap();
+        assert_eq!(key, "DX-2-Duplex_S1_L001");
         assert_eq!(read, ReadNumber::R1);
 
         let (key, read) =
-            parse_fastq_name("25NGS1071-Duplex_S1_L001_R2_001.fastq.gz").unwrap();
-        assert_eq!(key, "25NGS1071-Duplex_S1_L001");
+            parse_fastq_name("DX-2-Duplex_S1_L001_R2_001.fastq.gz").unwrap();
+        assert_eq!(key, "DX-2-Duplex_S1_L001");
         assert_eq!(read, ReadNumber::R2);
     }
 
@@ -338,8 +338,8 @@ mod tests {
     #[test]
     fn test_clean_sample_name() {
         assert_eq!(
-            clean_sample_name("25NGS1071-Duplex_S1_L001"),
-            "25NGS1071-Duplex"
+            clean_sample_name("DX-2-Duplex_S1_L001"),
+            "DX-2-Duplex"
         );
         assert_eq!(clean_sample_name("SampleA_S12"), "SampleA");
         assert_eq!(clean_sample_name("MySample"), "MySample");
