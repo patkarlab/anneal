@@ -123,8 +123,8 @@ PISCES_MINCOV="${PISCES_MINCOV:-1}"
 
 # ---- Background error model (built from biological negative controls) ----
 # See scripts/background_model/ for how these are regenerated.
-BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.patched.txt}"
-BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.patched.txt}"
+BETA_MATRIX_DCS="${BETA_MATRIX_DCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_DCS.txt}"
+BETA_MATRIX_SSCS="${BETA_MATRIX_SSCS:-${ANNEAL_ROOT}/results_bnc/beta_matrix_SSCS.txt}"
 ARTIFACT_MASK="${ARTIFACT_MASK:-${ANNEAL_ROOT}/results_bnc/artifact_mask.combined.bed}"
 # Track-matched indel blocklists. SSCS artifacts that are strand-specific do
 # not survive into DCS (C>A falls 29x between tracks), so applying an SSCS

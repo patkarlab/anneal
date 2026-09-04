@@ -17,6 +17,7 @@ Reads are counted unfiltered, matching how the beta matrix was built.
         --indel-blocklist indel_blocklist.tsv --out S.mrd_report.tsv
 """
 
+import math
 import argparse
 import os
 import sys
@@ -104,14 +105,55 @@ def fmt(x, spec=".3e"):
     return "NA" if x is None else format(x, spec)
 
 
+def fisher_two_sided(a, b, c, d):
+    """Two-sided Fisher exact p for the 2x2 table [[a, b], [c, d]]."""
+    n = a + b + c + d
+    if n == 0:
+        return 1.0
+    r1, c1 = a + b, a + c
+    lg = math.lgamma
+
+    def logp(x):
+        return (lg(r1 + 1) - lg(x + 1) - lg(r1 - x + 1)
+                + lg(n - r1 + 1) - lg(c1 - x + 1) - lg(n - r1 - c1 + x + 1)
+                - (lg(n + 1) - lg(c1 + 1) - lg(n - c1 + 1)))
+
+    lo, hi = max(0, c1 - (n - r1)), min(r1, c1)
+    p_obs = logp(a)
+    total = 0.0
+    for x in range(lo, hi + 1):
+        lp = logp(x)
+        if lp <= p_obs + 1e-9:
+            total += math.exp(lp)
+    return min(1.0, total)
+
+
+def orientation_bias(alt_fwd, alt_rev, ref_fwd, ref_rev, p_thresh):
+    """True if alt read orientation differs from reference orientation.
+
+    Duplex consensus reads are both-strand by construction, so fwd/rev is
+    the alignment orientation of the consensus read, not strand of origin.
+    A site covered by one mate only is one-sided for reference reads too;
+    only a departure from the reference orientation indicates a mapping
+    artifact. With no reference reads the caller's absolute rule applies.
+    """
+    if ref_fwd + ref_rev == 0:
+        return True
+    return fisher_two_sided(alt_fwd, alt_rev, ref_fwd, ref_rev) < p_thresh
+
+
 def score_snv(bam, row, m, matrix, masked, args):
     chrom, pos, alt = m["chrom"], m["pos"], m["alt"]
     counts, strand = count_at(bam, chrom, pos - 1, args.min_bq)
     depth = sum(counts.values())
     ac = counts.get(alt, 0)
     fwd, rev = strand.get(alt, [0, 0])
+    ref_fwd, ref_rev = strand.get(m.get("ref", ""), [0, 0])
     vaf = ac / depth if depth else 0.0
     sfrac = (max(fwd, rev) / ac) if ac else 0.0
+    one_sided = ac >= args.strand_min_alt and sfrac >= args.strand_thresh
+    biased = one_sided and orientation_bias(fwd, rev, ref_fwd, ref_rev,
+                                            args.strand_p)
 
     ab = matrix.get((chrom, pos, alt))
     alpha, beta = ab if ab else (None, None)
@@ -136,7 +178,7 @@ def score_snv(bam, row, m, matrix, masked, args):
         row["call"], row["note"] = "not_evaluable", "no background model"
     elif ac == 0:
         row["call"] = "not_detected"
-    elif ac >= args.strand_min_alt and sfrac >= args.strand_thresh:
+    elif biased:
         row["call"], row["note"] = "not_detected", "strand bias"
     elif ac < args.min_alt:
         row["call"], row["note"] = "not_detected", f"alt < {args.min_alt}"
@@ -144,6 +186,8 @@ def score_snv(bam, row, m, matrix, masked, args):
         row["call"] = "DETECTED"
     else:
         row["call"], row["note"] = "not_detected", "below background"
+    if one_sided and not biased and not row.get("note"):
+        row["note"] = "one-sided coverage: ref %d/%d" % (ref_fwd, ref_rev)
     return row
 
 
@@ -212,6 +256,10 @@ def main():
     ap.add_argument("--min-depth", type=int, default=100)
     ap.add_argument("--strand-thresh", type=float, default=0.90)
     ap.add_argument("--strand-min-alt", type=int, default=10)
+    ap.add_argument("--strand-p", type=float, default=1e-3,
+                    help="Fisher p below which alt orientation is "
+                         "called biased against reference orientation "
+                         "(default 1e-3)")
     ap.add_argument("--indel-min-controls", type=int, default=2)
     ap.add_argument("--min-indel-alt", type=int, default=3)
     ap.add_argument("--min-indel-vaf", type=float, default=1e-4)

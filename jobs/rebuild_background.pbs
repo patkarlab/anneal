@@ -1,0 +1,76 @@
+#!/bin/bash
+#PBS -N rebuild_background
+#PBS -q short
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/rebuild_background.log
+
+# Rebuild the per-site beta matrices (DCS and SSCS) from the 8 patched BNC
+# consensus BAMs with the corrected estimator in build_background.py
+# (outlier-control exclusion, gated method of moments, binomial sampling
+# variance subtracted). Both tracks run concurrently.
+#
+# Writes the frozen names results_bnc/beta_matrix_{DCS,SSCS}.txt with
+# .report.tsv beside them. The previous Pisces-derived files under those
+# names are archived as *.pisces_20260731.txt; the *.patched.txt files are
+# left untouched as the comparator for this change.
+#
+# Reference is the masked assembly, as for alignment and the previous build.
+
+cd /home/patkarlab-clinical/pipelines/anneal
+source pipeline/config.sh
+if declare -F activate_conda >/dev/null 2>&1; then
+    activate_conda anneal
+fi
+set -euo pipefail
+
+BED="${BEDFILE:-${ANNEAL_ROOT}/AML_MRD_DUPLEX_probes_hg38_sortd.bed}"
+BNC_DIR="${ANNEAL_ROOT}/results_bnc_patched"
+OUT_DIR="${ANNEAL_ROOT}/results_bnc"
+LOG_DIR="${ANNEAL_ROOT}/logs"
+mkdir -p "${LOG_DIR}"
+
+echo "start: $(date)"
+echo "ref:   ${REFERENCE}"
+echo "bed:   ${BED}"
+[ -f "${REFERENCE}" ] || { echo "ERROR: reference not found"; exit 1; }
+[ -f "${BED}" ]       || { echo "ERROR: BED not found"; exit 1; }
+
+pids=()
+for T in DCS SSCS; do
+    t="${T,,}"
+    bams=( "${BNC_DIR}"/AMLMRD_DUPLEX_BNC*/"${t}.sc.sorted.bam" )
+    echo "${T}: ${#bams[@]} BAMs"
+    if [ "${#bams[@]}" -ne 8 ]; then
+        echo "ERROR: expected 8 ${T} BAMs under ${BNC_DIR}"
+        exit 1
+    fi
+    old="${OUT_DIR}/beta_matrix_${T}.txt"
+    archive="${OUT_DIR}/beta_matrix_${T}.pisces_20260731.txt"
+    if [ -f "${old}" ] && [ ! -f "${archive}" ]; then
+        mv "${old}" "${archive}"
+        echo "${T}: archived previous matrix to $(basename "${archive}")"
+    fi
+    python build_background.py \
+        --bams "${bams[@]}" \
+        --ref "${REFERENCE}" \
+        --bed "${BED}" \
+        --out "${OUT_DIR}/beta_matrix_${T}.tmp" \
+        --report "${OUT_DIR}/beta_matrix_${T}.report.tmp" \
+        > "${LOG_DIR}/build_background_${T}.log" 2>&1 &
+    pids+=($!)
+done
+
+for p in "${pids[@]}"; do
+    wait "${p}"
+done
+
+for T in DCS SSCS; do
+    mv "${OUT_DIR}/beta_matrix_${T}.tmp"        "${OUT_DIR}/beta_matrix_${T}.txt"
+    mv "${OUT_DIR}/beta_matrix_${T}.report.tmp" "${OUT_DIR}/beta_matrix_${T}.report.tsv"
+    echo "== ${T}: $(wc -l < "${OUT_DIR}/beta_matrix_${T}.txt") matrix lines; report notes:"
+    awk -F'\t' 'NR>1 && $12!="" { n=split($12,a,";"); for(i=1;i<=n;i++){ sub(/:.*/,"",a[i]); c[a[i]]++ } }
+                END { for (k in c) printf "   %-16s %d\n", k, c[k] }' "${OUT_DIR}/beta_matrix_${T}.report.tsv"
+done
+echo "done: $(date)"

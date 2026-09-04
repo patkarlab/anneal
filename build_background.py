@@ -51,6 +51,7 @@ USAGE
         --report beta_matrix_DCS.report.tsv
 """
 
+import math
 import argparse
 import os
 import subprocess
@@ -127,7 +128,22 @@ def pileup_sample(bam, ref, bed):
     proc.wait()
 
 
-def fit_beta(counts, depths, dispersion):
+def poisson_sf(k, lam):
+    """P(X >= k) for X ~ Poisson(lam), without scipy."""
+    if k <= 0:
+        return 1.0
+    if lam <= 0:
+        return 0.0
+    log_term = -lam
+    cdf = math.exp(log_term)
+    for i in range(1, k):
+        log_term += math.log(lam) - math.log(i)
+        cdf += math.exp(log_term)
+    return max(0.0, 1.0 - cdf)
+
+
+def fit_beta(counts, depths, dispersion, mom_min_alt=20, outlier_p=1e-3,
+             outlier_min_alt=3, outlier_min_ratio=10.0):
     """Fit Beta parameters for one (position, alt base) across controls.
 
     counts, depths: per-sample alt counts and depths, germline already removed.
@@ -141,37 +157,56 @@ def fit_beta(counts, depths, dispersion):
     Otherwise the binomial concentration is divided by --dispersion, which
     widens the distribution and makes the test conservative.
     """
-    n_tot = sum(depths)
-    k_tot = sum(counts)
-    if n_tot <= 0:
+    pairs = [(k, d) for k, d in zip(counts, depths) if d > 0]
+    if not pairs:
         return None
+    note = ""
 
+    # Outlier control. The control with the most alt reads is tested against
+    # the pooled rate of the others; a Poisson outlier is dropped for this
+    # substitution so that one control's clone does not set the site's limit.
+    if len(pairs) >= 3:
+        k_max, d_max = max(pairs, key=lambda kd: kd[0])
+        if k_max >= outlier_min_alt:
+            k_rest = sum(k for k, _ in pairs) - k_max
+            d_rest = sum(d for _, d in pairs) - d_max
+            rate_rest = (k_rest + 0.5) / (d_rest + 1.0)
+            # Both conditions: Poisson-improbable given the others, and a
+            # large excess over them. The ratio keeps systematic artifact
+            # sites, where every control is high and one is merely highest,
+            # with the moment estimator instead of excising a control.
+            if (poisson_sf(k_max, rate_rest * d_max) < outlier_p
+                    and k_max / d_max >= outlier_min_ratio * rate_rest):
+                pairs.remove((k_max, d_max))
+                note = "outlier_dropped:%d/%d" % (k_max, d_max)
+
+    n_tot = sum(d for _, d in pairs)
+    k_tot = sum(k for k, _ in pairs)
     mean = (k_tot + 0.5) / (n_tot + 1.0)
     m_binomial = n_tot + 1.0
+    concentration = m_binomial / dispersion
 
-    m_moment = None
-    if len(counts) >= 3 and k_tot > 0:
-        rates = [k / d for k, d in zip(counts, depths) if d > 0]
-        if len(rates) >= 3:
-            r_mean = sum(rates) / len(rates)
-            r_var = sum((r - r_mean) ** 2 for r in rates) / (len(rates) - 1)
-            mean_depth = n_tot / len(depths)
-            var_binomial = r_mean * (1.0 - r_mean) / mean_depth
-            if r_var > var_binomial > 0 and 0.0 < r_mean < 1.0:
-                candidate = r_mean * (1.0 - r_mean) / r_var - 1.0
-                if candidate > 1.0:
-                    m_moment = candidate
-
-    if m_moment is not None and m_moment < m_binomial:
-        concentration = m_moment
-    else:
-        concentration = m_binomial / dispersion
+    # Method of moments, only when estimable. Binomial sampling variance is
+    # subtracted from the between-control variance first.
+    nonzero = sum(1 for k, _ in pairs if k > 0)
+    if len(pairs) >= 3 and k_tot >= mom_min_alt and nonzero >= 3:
+        rates = [k / d for k, d in pairs]
+        r_mean = sum(rates) / len(rates)
+        r_var = sum((r - r_mean) ** 2 for r in rates) / (len(rates) - 1)
+        mean_depth = n_tot / len(pairs)
+        var_binomial = r_mean * (1.0 - r_mean) / mean_depth
+        excess = r_var - var_binomial
+        if excess > 0 and 0.0 < r_mean < 1.0:
+            candidate = r_mean * (1.0 - r_mean) / excess - 1.0
+            if 1.0 < candidate < m_binomial:
+                concentration = candidate
+                note = (note + ";" if note else "") + "mom"
 
     alpha = mean * concentration
     beta = (1.0 - mean) * concentration
     if alpha <= 0 or beta <= 0:
         return None
-    return alpha, beta
+    return alpha, beta, len(pairs), n_tot, k_tot, note
 
 
 def main():
@@ -184,6 +219,22 @@ def main():
                     help="Output beta matrix, e.g. beta_matrix_DCS.txt")
     ap.add_argument("--report",
                     help="Optional per-site raw count report")
+    ap.add_argument("--mom-min-alt", type=int, default=20,
+                    help="Pooled alt reads required before between-control "
+                         "dispersion is estimated by method of moments; below "
+                         "this the --dispersion fallback is used (default 20)")
+    ap.add_argument("--outlier-p", type=float, default=1e-3,
+                    help="Poisson tail probability below which the highest-"
+                         "count control is dropped for a substitution "
+                         "(default 1e-3)")
+    ap.add_argument("--outlier-min-alt", type=int, default=3,
+                    help="Minimum alt reads in a control before it can be "
+                         "dropped as an outlier (default 3)")
+    ap.add_argument("--outlier-min-ratio", type=float, default=10.0,
+                    help="The dropped control's rate must exceed the pooled "
+                         "rate of the others by this factor; keeps systematic "
+                         "artifact sites intact for the moment estimator "
+                         "(default 10)")
     ap.add_argument("--dispersion", type=float, default=3.0,
                     help="Variance inflation over binomial when the controls "
                          "give no dispersion estimate (default 3.0). Higher "
@@ -239,7 +290,7 @@ def main():
     if args.report:
         rep = open(args.report, "w")
         print("chr\tpos\tref\tn_samples\tpooled_depth\t"
-              "alt\talt_count\tpooled_rate\talpha\tbeta\tmodel_rate",
+              "alt\talt_count\tpooled_rate\talpha\tbeta\tmodel_rate\tnote",
               file=rep)
 
     n_modelled = n_skipped = 0
@@ -257,19 +308,19 @@ def main():
                 continue
             counts = [k for k, _ in records]
             depths = [d for _, d in records]
-            fit = fit_beta(counts, depths, args.dispersion)
+            fit = fit_beta(counts, depths, args.dispersion,
+                           args.mom_min_alt, args.outlier_p, args.outlier_min_alt,
+                           args.outlier_min_ratio)
             if fit is None:
                 fields.extend(["0", "0"])
                 continue
-            alpha, beta = fit
+            alpha, beta, n_used, n_tot, k_tot, note = fit
             fields.extend(["%.6g" % alpha, "%.6g" % beta])
             if rep:
-                n_tot = sum(depths)
-                k_tot = sum(counts)
-                print("%s\t%d\t%s\t%d\t%d\t%s\t%d\t%.3e\t%.6g\t%.6g\t%.3e"
-                      % (chrom, pos, ref_base, len(records), n_tot,
+                print("%s\t%d\t%s\t%d\t%d\t%s\t%d\t%.3e\t%.6g\t%.6g\t%.3e\t%s"
+                      % (chrom, pos, ref_base, n_used, n_tot,
                          alt, k_tot, k_tot / n_tot if n_tot else 0.0,
-                         alpha, beta, alpha / (alpha + beta)), file=rep)
+                         alpha, beta, alpha / (alpha + beta), note), file=rep)
         if any(f != "0" for f in fields):
             n_modelled += 1
         else:
