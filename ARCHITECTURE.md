@@ -325,3 +325,89 @@ al. NAR 2019 supplementary table 5 (SmallDeep panel). It is not measurable from
 the current control panel.
 
 **Untargeted discovery is not supported.** See Scope.
+
+## Stage 5: background scoring (0.3.0)
+
+Stage 5 is the point at which variant calls and the error model meet. It
+runs per sample and per track (`SCORE_TRACKS`, default `dcs sscs`) and is
+blind: the candidate list is derived from the sample's own reads and no
+diagnosis variant list is read anywhere in stages 1-5.
+
+**Candidates.** `scripts/error_model/build_candidates.py` takes the union of
+the Pisces variants-only VCF and the stage 2b indel table
+(`scan_indels.py`), both VCF-anchored, deduplicated on chrom/pos/ref/alt.
+Multi-allelic VCF records are split. Alleles containing N are excluded: in
+the corrected engine an N inside a consensus read means the two strands
+disagreed at that base, so `G>GN` is an unresolved event, not an allele.
+Each candidate carries a label `Gene|Consequence|HGVSp;src=P|S|PS` from the
+stage 3 tables (P = Pisces, S = indel scan). Output is the header-less
+`chrom pos ref alt label` format that `call_mrd_markers.py` reads.
+
+**Scoring.** `call_mrd_markers.py` counts reads at every candidate directly
+from the consensus BAM (Pisces' Q20 gate would otherwise remove a marker at
+a few reads), scores substitutions against the per-track beta matrix with a
+beta-binomial tail at `--alpha-level 0.005`, and indels against the
+per-track blocklist (`--indel-min-controls 6`, `--min-indel-alt 3`). The
+artifact mask is not passed. Output:
+`scored/{sample}.{track}.calls.tsv`, one row per candidate with alt count,
+depth, VAF, per-orientation counts, background, p-value, minimum callable
+count, per-locus LoD, call and note.
+
+**Strand test.** Duplex reads are both-strand by construction, so
+`alt_fwd`/`alt_rev` on DCS is the alignment orientation of the consensus
+read, not strand of origin. A site covered by one mate only is one-sided
+for reference reads as well. The test is therefore relative: with alt >=
+`--strand-min-alt` (10) and the alt fraction >= `--strand-thresh` (0.90)
+one-sided, a call is rejected only if the alt orientation differs from the
+reference orientation at the same site (Fisher exact, two-sided, p <
+`--strand-p` 1e-3). With no reference reads the absolute rule applies.
+Rows that are one-sided but not biased are annotated
+`one-sided coverage: ref F/R`.
+
+**Marker overlay.** Tracking a patient's diagnosis variants is a separate,
+post-hoc run of `call_mrd_markers.py` with `--markers <patient.tsv>` on the
+stage 1 BAM, using the same matrix and blocklist. For a dilution or
+longitudinal series the baseline sample's candidate list is scored on every
+later sample; scoring each sample's own list produces spurious zeros for
+markers that fell below the caller's gate.
+
+## Background estimator (0.3.0)
+
+`build_background.py` fits one Beta per (position, alt base) from the eight
+BNC consensus BAMs per track. Pileups are taken directly (`-Q 30`), so no
+site is censored by a caller. The mean is the pooled rate under a Jeffreys
+prior, `(k + 0.5) / (N + 1)`, so a site with no observed alt is anchored at
+about `0.5/N` rather than at an external constant.
+
+The concentration (`alpha + beta`) decides how much between-control
+variation the model tolerates:
+
+1. Outlier control. The control with the most alt reads is tested against
+   the pooled rate of the others. If it carries at least `--outlier-min-alt`
+   (3) reads, is a Poisson outlier at `--outlier-p` (1e-3), and its rate is
+   at least `--outlier-min-ratio` (10) times the others', it is dropped for
+   that substitution and the exclusion is written to the report. This keeps
+   one control's clone or library-specific event from setting the site's
+   limit for every patient (IDH2 R140: 5 reads in one control, none in
+   seven). The ratio keeps systematic artifact sites, where every control is
+   high and one is merely highest, with the moment estimator.
+2. Method of moments, only when estimable: `--mom-min-alt` (20) pooled alt
+   reads in at least three non-zero controls. Binomial sampling variance is
+   subtracted from the between-control variance first; the estimate is used
+   when it implies more dispersion than pure binomial sampling.
+3. Otherwise the fallback: binomial concentration divided by `--dispersion`
+   (3.0), a conservative widening.
+
+The report (`beta_matrix_{TRACK}.report.tsv`) records, per substitution,
+controls used, pooled depth and count, alpha, beta, model rate, and a note
+(`outlier_dropped:k/d`, `mom`, or empty).
+
+## Reporting policy
+
+DCS is the reported track. SSCS is confirmatory only. For each known
+marker the report carries a DCS line and an SSCS line; a marker positive in
+SSCS and negative in DCS is reported as "detected below duplex sensitivity"
+with both counts and both limits. SSCS is not quantitative and is
+damage-prone for C>T/G>A near its limit; SSCS indels in homopolymers are
+blocklisted (CEBPA H24Afs is not evaluable on SSCS). See the 0.3.0
+CHANGELOG for the dilution series that fixed this policy.

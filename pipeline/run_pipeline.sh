@@ -51,6 +51,14 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --score)
+            if [ -z "${STAGES}" ]; then
+                STAGES="1,2,3,5"
+            else
+                STAGES="${STAGES},5"
+            fi
+            shift
+            ;;
         --stages)
             STAGES="$2"
             shift 2
@@ -86,6 +94,7 @@ if [ $# -ne 4 ]; then
     echo ""
     echo "Options:"
     echo "  --stages 1,2    Run only these stages (comma-separated)"
+    echo "  --score         Add stage 5, background scoring (1,2,3,5 if no stages given)"
     echo "  --annotate      Include stage 3 annotation (stages become 1,2,3)"
     echo "  --flt3          Include stage 4 FLT3-ITD (stages become 1,2,4)"
     echo "  --skip-vv       Skip VariantValidator in annotation"
@@ -110,7 +119,7 @@ run_stage() {
 PIPELINE_START=$(date +%s)
 
 echo "################################################################"
-echo "  Anneal 0.1.0 -- Pipeline"
+echo "  Anneal 0.3.0 -- Pipeline"
 echo "  Sample:  ${SAMPLE}"
 echo "  Output:  ${OUTPUT_DIR}/${SAMPLE}/"
 echo "  Stages:  ${STAGES}"
@@ -151,6 +160,14 @@ if run_stage 4; then
     echo ""
 else
     echo "[SKIP] Stage 4: FLT3-ITD"
+    echo ""
+fi
+# ---- Stage 5: Background scoring ----
+if run_stage 5; then
+    bash "${SCRIPT_DIR}/stage5_score.sh" "${SAMPLE}" "${OUTPUT_DIR}"
+    echo ""
+else
+    echo "[SKIP] Stage 5: background scoring"
     echo ""
 fi
 

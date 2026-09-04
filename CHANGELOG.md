@@ -1,3 +1,121 @@
+## 0.3.0 - 2026-09-04
+
+Validated release: corrected duplex engine, rebuilt background model, and a
+scoring stage. Every number below was reproduced through `run_pipeline.sh` on
+the 25NGS1601 two-fold dilution series (G, H, I, J).
+
+### Consensus engine (commit 691a92f)
+- Four defects fixed: CIGAR restored to the family key; duplex consensus
+  requires both strands to call the same non-N base at >= Q30 (no gap-fill);
+  rescued singletons report family_size 1; per-strand depth emitted as
+  `XA`/`XB`. DCS error rate on 25NGS1601-G 2.903e-04 -> 7.635e-05 at -1.1%
+  depth; C>A (8-oxoG) 2.939e-05 -> 1.000e-06. Eight BNCs: DCS 6.22e-05,
+  CV 12.4%.
+- Tiering by min(XA, XB) is flat: `ANNEAL_MIN_READS_PER_STRAND` stays 1 and
+  singleton correction stays on. Settled.
+- Binary is `target_cpu/release/anneal`; `config.sh` defaults to it, to the
+  BWA-indexed masked reference, and to the rebuilt background files.
+
+### Background model
+- `build_background.py` replaces the Pisces-VCF fit. BNC consensus BAMs are
+  pileuped directly, so no site is censored by a caller; zero-count sites are
+  anchored by a Jeffreys prior on pooled depth.
+- Estimator corrections in this release:
+  - binomial sampling variance is subtracted before between-control
+    dispersion is derived, so sampling noise on a few reads no longer
+    registers as dispersion;
+  - method of moments only when estimable (>= 20 pooled alt reads in >= 3
+    non-zero controls), otherwise the `--dispersion 3.0` fallback;
+  - a control whose count is a Poisson outlier (p < 1e-3) at >= 10x the
+    pooled rate of the other controls, with >= 3 reads, is dropped for that
+    substitution and recorded in the report (`outlier_dropped:k/d`). The
+    ratio keeps systematic artifact sites, where every control is high and
+    one is merely highest, with the moment estimator.
+- DCS matrix: 1,310 substitutions with a control dropped, 118 with measured
+  dispersion; small-count MoM sites fell from 7,451 to 82. SSCS matrix:
+  5,327 dropped, 6,555 measured.
+- Effect at IDH2 R140 C>T (chr15:90088702): one control carried 5 reads
+  (0.13%), the other seven none. Before: alpha 0.113, beta 738, 12 reads
+  needed at 3,205x (0.37%). After: that control excluded, alpha 0.167, beta
+  10,695, 3 reads (0.094%).
+- Indel blocklists are per track (`build_indel_blocklist_v2.py`, from the
+  `scan_indels.py` tables, consumed with `--indel-min-controls 6`). The
+  artifact mask is retired: a 1% floor against a 0.005% background, and the
+  per-site matrix now does its job.
+- Files: `results_bnc/beta_matrix_{DCS,SSCS}.txt` (+ `.report.tsv`, now with
+  a `note` column and `n_samples` = controls used). The previous
+  Pisces-derived files are archived as `*.pisces_20260731.txt`; the
+  intermediate `*.patched.txt` files are the comparator for this change.
+
+### Scoring
+- Stage 5 (`pipeline/stage5_score.sh`; `--stages 5` or `--score`). Per
+  track, candidates are the union of the Pisces VCF and the CIGAR indel scan,
+  VCF-anchored, deduplicated, N-containing alleles excluded, labelled from
+  the annotation tables (`scripts/error_model/build_candidates.py`), then
+  scored by `call_mrd_markers.py` against the per-track matrix and blocklist
+  into `scored/{sample}.{track}.calls.tsv`. Previously the indel scan never
+  entered scoring, so a marker below Pisces' Q20 gate had no route to a
+  call. The Pisces records reproduce the 27 Aug by-hand verdicts exactly.
+- Strand filter is relative. With alt >= `--strand-min-alt` and the alt
+  fraction >= `--strand-thresh` one-sided, a call is rejected only if alt
+  orientation differs from reference orientation at the same site (Fisher
+  exact, two-sided, p < `--strand-p` 1e-3). Duplex reads are both-strand by
+  construction, so orientation alone had censored sites covered by one mate
+  (IDH1, TP53, PHF6 at 10-13 reads); the PTPN11 A>C cluster against balanced
+  reference reads still fails. Rows that are one-sided but not biased carry
+  the note "one-sided coverage: ref F/R".
+- Marker overlay stays a post-hoc `call_mrd_markers.py` run with the
+  patient's diagnosis list. Nothing in stages 1-5 reads that list.
+
+### Validation: 25NGS1601, two-fold series, DCS (reported track)
+
+| marker        | G                    | H                            | I                        | J                        |
+|---------------|----------------------|------------------------------|--------------------------|--------------------------|
+| NPM1 type A   | 22/7017 0.314% DET   | 14/8855 0.158% DET           | 6/6772 0.089% DET        | 0/6841 ND (LoD 0.044%)   |
+| IDH2 R140Q    | 11/3205 0.343% DET   | 1/3492 0.029% ND (LoD 0.086%)| 0/3262 ND (LoD 0.092%)   | 0/2796 ND (LoD 0.072%)   |
+| CEBPA H24Afs  | 4/219 1.83% DET      | 0/132 ND (LoD 2.3%)          | 0/222 ND (LoD 1.4%)      | 0/221 ND (LoD 1.4%)      |
+
+G's candidate list scored on each rung: DETECTED 111 / 45 / 41 / 45. The
+flat 45 are germline and diluent constants (SF3B1 intronic 7%, the FLT3
+intronic SNPs, the RAD21 homopolymer ladder).
+
+SSCS confirmatory track, same markers:
+
+| marker        | G                     | H                     | I                     | J                     |
+|---------------|-----------------------|-----------------------|-----------------------|-----------------------|
+| NPM1 type A   | 147/51919 0.283% DET  | 49/52030 0.094% DET   | 83/49465 0.168% DET   | 9/47218 0.019% DET    |
+| IDH2 R140Q    | 134/30397 0.441% DET  | 24/25312 0.095% DET   | 6/29377 0.020% ND     | 12/27277 0.044% DET   |
+| CEBPA H24Afs  | not evaluable at any rung: SSCS blocklist (homopolymer slippage in 8/8 BNCs) |
+
+IDH2 at H: SSCS shows the molecules at 0.095%; DCS has 1 of an expected 6
+(p ~ 0.02); the pre-fix engine had 2 at the same site. G converts normally
+(0.44% SSCS -> 0.34% DCS) and NPM1 in the same H library converts normally,
+so this is molecule sampling at ~3,500x duplex depth, not an engine defect.
+
+### Reporting policy (settled)
+DCS is the reported track. SSCS is confirmatory only: a known marker
+positive in SSCS and negative in DCS is reported as "detected below duplex
+sensitivity" with both counts. SSCS is not quantitative (NPM1 SSCS 0.28 ->
+0.094 -> 0.17 -> 0.019 while DCS halves cleanly) and is damage-prone for
+C>T/G>A near its limit (IDH2 SSCS: I 0.020% ND, J 0.044% DET).
+
+### Known issues
+- CEBPA probe delivers 130-220x DCS: non-evaluable at every rung. Panel.
+- TP53 chr17:7676341 T>C: controls disagree (5-15%), fitted concentration
+  15; effectively non-evaluable.
+- `CUTOFF=0.6` and the `read_len` tail behaviour (a position covered by one
+  read in a multi-read family is called at proportion 1.0) are unchanged
+  from the validated runs. Changing either means redoing the BNCs and the
+  dilution.
+- `scan_indels.py` reports insertions whose inserted base is N (strand
+  disagreement inside the insertion) as separate records with the same
+  support as the resolved allele. Excluded at candidate build, not yet at
+  source. `strand_frac` in the indel table is read orientation, not strand
+  of origin.
+- 25NGS1734 stage 1 outstanding (/scratch quota during alignment).
+- Depth: ~2,800x DCS gives a 3-molecule limit near 0.1%; 0.05% needs
+  ~6,000x. Run the saturation test (1601-G subsampled to 50% and 25%)
+  before the next sequencing batch.
 ## v0.3.0 - Pisces in stage 2, FLT3-ITD as stage 4
 
 ### Fixed
