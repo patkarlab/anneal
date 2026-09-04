@@ -19,7 +19,7 @@ Usage:
         -o results/SAMPLE/annotated/
 
 Requires:
-  - Local VariantValidator Docker container running on localhost:5001
+  - Network access to the VariantValidator REST API (login node)
 """
 
 import argparse
@@ -27,6 +27,8 @@ import logging
 import os
 import re
 import sys
+import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -40,7 +42,55 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DEFAULT_VV_URL = "http://localhost:5001"
+DEFAULT_VV_URL = "https://rest.variantvalidator.org"
+USER_AGENT = "anneal/0.3.0 (patkarlab, MRD pipeline)"
+
+# Politeness for the shared public endpoint: at least MIN_INTERVAL seconds
+# between requests across all threads. Set from --min-interval in main().
+MIN_INTERVAL = 1.0
+CACHE_PATH = None
+# Only coding and splice-site consequences are worth an API call; the rest
+# keep VEP's HGVS. VEP SO terms, matched anywhere in an &-joined list.
+CODING_ONLY = True
+CODING_PATTERN = (r"missense_variant|stop_gained|stop_lost|start_lost|"
+                  r"frameshift_variant|inframe_insertion|inframe_deletion|"
+                  r"splice_acceptor_variant|splice_donor_variant|"
+                  r"protein_altering_variant")
+_THROTTLE_LOCK = threading.Lock()
+_LAST_REQUEST = [0.0]
+
+
+def _throttle():
+    with _THROTTLE_LOCK:
+        wait = MIN_INTERVAL - (time.monotonic() - _LAST_REQUEST[0])
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_REQUEST[0] = time.monotonic()
+
+
+def load_cache(path):
+    """Cache of query HGVS -> result dict. Missing or unreadable -> empty."""
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as e:
+        log.warning("cache unreadable, starting empty: %s", e)
+        return {}
+
+
+def save_cache(path, cache):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(cache, fh, indent=0, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def is_transient(result):
+    w = str(result.get("VV_Warnings", ""))
+    return w.startswith("API_ERROR") or w.startswith("EXCEPTION")
 GENOME_BUILD = "GRCh38"
 
 
@@ -58,6 +108,15 @@ def parse_args():
                         help="Parallel query threads (default: 1)")
     parser.add_argument("--timeout", type=int, default=120,
                         help="Per-query timeout in seconds (default: 120)")
+    parser.add_argument("--cache", default=None,
+                        help="JSON cache of results keyed on query HGVS; "
+                             "read before querying, updated after")
+    parser.add_argument("--all-consequences", action="store_true",
+                        help="Query every row with an HGVSc, not only coding "
+                             "and splice-site consequences")
+    parser.add_argument("--min-interval", type=float, default=1.0,
+                        help="Minimum seconds between requests to the public "
+                             "endpoint (default: 1.0)")
     return parser.parse_args()
 
 
@@ -65,7 +124,7 @@ def check_vv_connection(base_url):
     """Verify VariantValidator is reachable."""
     try:
         test_url = (f"{base_url}/VariantValidator/variantvalidator/"
-                    f"GRCh38/NM_000088.4:c.589G>T/all?content-type=application/json")
+                    f"GRCh38/NM_000088.4:c.589G>T/mane_select?content-type=application/json")
         resp = requests.get(test_url, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
@@ -131,7 +190,7 @@ def query_variant(hgvsc, base_url, timeout):
 
     url = (
         f"{base_url}/VariantValidator/variantvalidator/"
-        f"{GENOME_BUILD}/{requests.utils.quote(hgvsc, safe='')}/all"
+        f"{GENOME_BUILD}/{requests.utils.quote(hgvsc, safe='')}/mane_select"
         f"?content-type=application/json"
     )
 
@@ -139,7 +198,10 @@ def query_variant(hgvsc, base_url, timeout):
     data = None
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url, timeout=timeout)
+            _throttle()
+            resp = requests.get(url, timeout=timeout,
+                                headers={"User-Agent": USER_AGENT,
+                                         "Accept": "application/json"})
             if resp.status_code == 429:
                 time.sleep(2 ** attempt)
                 continue
@@ -253,6 +315,11 @@ def query_variant(hgvsc, base_url, timeout):
 def validate_variants(df, base_url, threads, timeout):
     """Validate all variants with HGVSc via parallel queries."""
     mask = ~df["HGVSc"].isin(["-1", "", "nan"]) & df["HGVSc"].notna()
+    if CODING_ONLY and "Consequence" in df.columns:
+        coding = df["Consequence"].fillna("").astype(str).str.contains(CODING_PATTERN, regex=True)
+        log.info("Consequence filter: %d of %d rows with HGVSc are coding or splice-site",
+                 int((mask & coding).sum()), int(mask.sum()))
+        mask &= coding
     query_indices = df.index[mask].tolist()
     skip_count = len(df) - len(query_indices)
     log.info("Querying %d variants (%d skipped -- no HGVSc)",
@@ -277,11 +344,17 @@ def validate_variants(df, base_url, threads, timeout):
     log.info("Unique HGVS queries: %d (%d could not be converted)",
              len(unique_hgvsc), no_query_count)
 
+    cache = load_cache(CACHE_PATH)
+    cached = {h: cache[h] for h in unique_hgvsc if h in cache}
+    to_query = [h for h in unique_hgvsc if h not in cache]
+    log.info("Cache %s: %d hits, %d to query",
+             CACHE_PATH or "(none)", len(cached), len(to_query))
+
     for col in ["VV_HGVSc", "VV_HGVSp", "VV_HGVSg", "VV_Transcript", "VV_Warnings"]:
         df[col] = ""
     df["VV_Valid"] = ""
 
-    results = {}
+    results = dict(cached)
     completed = 0
     failed = 0
     start_time = time.time()
@@ -289,7 +362,7 @@ def validate_variants(df, base_url, threads, timeout):
     with ThreadPoolExecutor(max_workers=threads) as executor:
         future_to_hgvsc = {
             executor.submit(query_variant, hgvsc, base_url, timeout): hgvsc
-            for hgvsc in unique_hgvsc
+            for hgvsc in to_query
         }
 
         for future in as_completed(future_to_hgvsc):
@@ -310,11 +383,19 @@ def validate_variants(df, base_url, threads, timeout):
 
             results[hgvsc] = result
 
-            if completed % 50 == 0 or completed == len(unique_hgvsc):
+            if completed % 50 == 0 or completed == len(to_query):
                 elapsed = time.time() - start_time
                 rate = completed / elapsed if elapsed > 0 else 0
                 log.info("  Progress: %d/%d (%.1f/sec, %d failed)",
-                         completed, len(unique_hgvsc), rate, failed)
+                         completed, len(to_query), rate, failed)
+
+    if CACHE_PATH:
+        fresh = {h: r for h, r in results.items()
+                 if h not in cached and not is_transient(r)}
+        if fresh:
+            cache.update(fresh)
+            save_cache(CACHE_PATH, cache)
+            log.info("Cache updated: +%d, %d total", len(fresh), len(cache))
 
     for query_hgvs, indices in query_to_indices.items():
         result = results.get(query_hgvs, {})
@@ -322,7 +403,7 @@ def validate_variants(df, base_url, threads, timeout):
             for col in ["VV_HGVSc", "VV_HGVSp", "VV_HGVSg",
                         "VV_Transcript", "VV_Warnings"]:
                 df.at[idx, col] = result.get(col, "")
-            df.at[idx, "VV_Valid"] = result.get("VV_Valid", False)
+            df.at[idx, "VV_Valid"] = str(result.get("VV_Valid", False))
 
     return df, len(query_indices), len(unique_hgvsc), failed
 
@@ -337,6 +418,10 @@ def main():
     outdir = args.outdir or os.path.dirname(args.input)
     os.makedirs(outdir, exist_ok=True)
 
+    global CACHE_PATH, MIN_INTERVAL, CODING_ONLY
+    CACHE_PATH = args.cache
+    CODING_ONLY = not args.all_consequences
+    MIN_INTERVAL = args.min_interval
     if not check_vv_connection(args.vv_url):
         sys.exit(1)
 

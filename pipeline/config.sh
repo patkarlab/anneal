@@ -151,3 +151,12 @@ INDEL_MIN_ALT="${INDEL_MIN_ALT:-2}"
 # ---- Stage 5: background scoring ----
 SCORE_TRACKS="${SCORE_TRACKS:-dcs sscs}"
 INDEL_MIN_CONTROLS="${INDEL_MIN_CONTROLS:-6}"
+
+# ---- HGVS validation (VariantValidator public REST API) ----
+# Compute nodes have no route out, so this does not run in stage 3 unless
+# VV_IN_STAGE3=true. Run it on the login node after a batch:
+#   bash pipeline/validate_hgvs_batch.sh <outdir> [sample ...]
+# The cache holds patient HGVS strings: gitignored, never committed.
+VV_URL="${VV_URL:-https://rest.variantvalidator.org}"
+VV_CACHE="${VV_CACHE:-${ANNEAL_ROOT}/vv_cache.json}"
+VV_IN_STAGE3="${VV_IN_STAGE3:-false}"

@@ -105,3 +105,4 @@ dilutions_output/
 logs_*/
 *.bak.*
 logs/
+vv_cache.json

@@ -39,7 +39,11 @@ fi
 
 SAMPLE="$1"
 OUTPUT_DIR="$2"
-SKIP_VV=false
+# HGVS validation needs the public VariantValidator API; compute nodes have
+# no route out, so it is off unless VV_IN_STAGE3=true in config.sh.
+# Run post hoc with pipeline/validate_hgvs_batch.sh instead.
+SKIP_VV=true
+[ "${VV_IN_STAGE3:-false}" = true ] && SKIP_VV=false
 if [ "${3:-}" = "--skip-vv" ]; then
     SKIP_VV=true
 fi
@@ -118,7 +122,9 @@ for LABEL in dcs sscs; do
             echo "[$(date '+%H:%M:%S')] Validating HGVS for ${LABEL} (${CLINICAL_COUNT} variants)..."
             python3 "${SCRIPTS_DIR}/validate_hgvs.py" \
                 -i "${CLINICAL_TSV}" \
-                -o "${ANNOTATED_DIR}" 2>&1 || \
+                -o "${ANNOTATED_DIR}" \
+                --vv-url "${VV_URL:-https://rest.variantvalidator.org}" \
+                ${VV_CACHE:+--cache "${VV_CACHE}"} 2>&1 || \
                 echo "WARNING: HGVS validation failed (non-fatal)"
         else
             echo "[$(date '+%H:%M:%S')] No PASS variants for ${LABEL}, skipping HGVS"
