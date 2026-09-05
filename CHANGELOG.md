@@ -118,6 +118,24 @@ for every molecule matched by name. Calls are unaffected. The 0.3.1 rebuild
 same test and matches it to the same degree. Making the tie-breaks
 deterministic is a future engine change; it would not alter any sequence.
 
+### Saturation (dilution top rung, genome-wide consensus on read subsamples)
+| reads | on-target DCS reads | DCS depth |
+|-------|---------------------|-----------|
+| 25%   | 361,829 | 1,666× |
+| 50%   | 455,003 | 2,101× |
+| 75%   | 544,655 | 2,521× |
+| 100%  | 625,560 | 2,898× |
+
+Nearly linear, beginning to bend (each quarter adds 435, 420, 377×); a
+quarter of the reads already yields 58% of the depth. Doubling the reads on
+these libraries would give roughly 4,300×; 6,000× (0.05%) needs about three
+times the reads, so the efficient route is more input DNA per library
+together with deeper sequencing. The binary's `consensus --bedfile` mode
+emits families in every overlapping probe region and reports ~1.5× the
+duplex depth of the genome-wide path; it must not be used for yield
+comparisons, and `jobs/anneal_saturation_gw.pbs` runs the subsamples
+genome-wide for that reason.
+
 ### Known issues
 - CEBPA probe delivers 130-220x DCS: non-evaluable at every rung. Panel.
 - TP53 chr17:7676341 T>C: controls disagree (5-15%), fitted concentration
