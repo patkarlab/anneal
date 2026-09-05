@@ -21,7 +21,7 @@
 # bending, the library is complexity-limited and more input DNA is needed,
 # not more reads.
 #
-#   qsub jobs/anneal_saturation.pbs             (defaults to the dilution top rung)
+#   qsub jobs/anneal_saturation.pbs             (FULL is required)
 #   qsub -v FULL=<sample>_S<n> jobs/anneal_saturation.pbs
 
 ANNEAL_ROOT=/home/patkarlab-clinical/pipelines/anneal
@@ -29,7 +29,7 @@ cd "${ANNEAL_ROOT}"
 source pipeline/config.sh
 activate_conda
 
-FULL="${FULL:-25NGS1601-G-Duplex_S9}"
+FULL="${FULL:?submit with -v FULL=<sample>_S<n>}"
 NAME="${FULL%_S*}"
 FQ=/scratch/patkarlab-clinical/Duplex_dilutions
 OUT=/scratch/patkarlab-clinical/saturation
