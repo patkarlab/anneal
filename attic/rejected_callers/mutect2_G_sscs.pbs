@@ -1,0 +1,49 @@
+#!/bin/bash
+#PBS -N mutect2_G
+#PBS -l nodes=1:ppn=4
+#PBS -j oe
+cd "${PBS_O_WORKDIR:-$PWD}"
+
+# Activate the anneal conda env so gatk is on PATH inside the batch job.
+# (PBS jobs do not inherit the interactive shell's conda activation.)
+eval "$(/home/patkarlab-clinical/miniconda3/bin/conda shell.bash hook)"
+conda activate anneal
+
+set -euo pipefail
+
+# ---- Tool path (gatk4 installed into the anneal env; override-able for sandbox) ----
+GATK="${GATK:-gatk}"
+
+# ---- Inputs (locked, confirmed) ----
+REF="${REF:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.fasta}"
+BED="${BED:-AML_MRD_DUPLEX_probes_hg38_sortd.bed}"
+SAMPLE="${SAMPLE:-25NGS1601-G-Duplex}"
+DIR="${DIR:-results_dilution_gpu/${SAMPLE}}"
+BAM="${BAM:-${DIR}/${SAMPLE}.sscs.panel.bam}"   # SAME shared panel BAM as SiNVICT/LoFreq
+
+RAW="${DIR}/${SAMPLE}.sscs.mutect2.raw.vcf"
+FILT="${DIR}/${SAMPLE}.sscs.mutect2.filtered.vcf"
+
+echo "== Mutect2 blind run: ${SAMPLE} =="
+echo "REF=$REF"; echo "BED=$BED"; echo "BAM=$BAM"
+[ -f "$BAM" ] || { echo "FATAL: shared panel BAM not found: $BAM" >&2; exit 1; }
+
+# Step 1: Mutect2 tumor-only, panel-wide. Downsampling DISABLED (critical at duplex depth:
+# default ~50x downsampling would discard nearly all reads and destroy low-VAF sensitivity).
+# No germline resource / PoN here: normals feed the separate per-caller error model downstream.
+"$GATK" Mutect2 \
+  -R "$REF" \
+  -I "$BAM" \
+  -L "$BED" \
+  --max-reads-per-alignment-start 0 \
+  -O "$RAW"
+
+# Step 2: FilterMutectCalls (mandatory second pass applying Mutect2's statistical model).
+"$GATK" FilterMutectCalls \
+  -R "$REF" \
+  -V "$RAW" \
+  -O "$FILT"
+
+echo "raw records:      $(grep -vc '^#' "$RAW" || true)"
+echo "filtered records: $(grep -vc '^#' "$FILT" || true)"
+echo "PASS records:     $(awk -F'\t' '!/^#/ && $7=="PASS"' "$FILT" | wc -l)"

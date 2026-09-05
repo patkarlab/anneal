@@ -1,0 +1,58 @@
+#!/bin/bash
+#PBS -N sinvict_G
+#PBS -l nodes=1:ppn=4
+#PBS -j oe
+# Run from the anneal working dir: qsub from ~/pipelines/anneal so relative paths resolve.
+cd "${PBS_O_WORKDIR:-$PWD}"
+
+# Activate the anneal conda env so bam-readcount is on PATH inside the batch job.
+eval "$(/home/patkarlab-clinical/miniconda3/bin/conda shell.bash hook)"
+conda activate anneal
+export LD_LIBRARY_PATH="$HOME/miniconda3/envs/anneal/lib:${LD_LIBRARY_PATH:-}"
+
+set -euo pipefail
+
+# ---- Tool paths (override-able for sandbox testing) ----
+BAMREADCOUNT="${BAMREADCOUNT:-bam-readcount}"
+SINVICT="${SINVICT:-$HOME/programs/sinvict/sinvict}"
+
+# ---- Inputs (locked, confirmed) ----
+REF="${REF:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.fasta}"
+BED="${BED:-AML_MRD_DUPLEX_probes_hg38_sortd.bed}"
+SAMPLE="${SAMPLE:-25NGS1601-G-Duplex}"
+DIR="${DIR:-results_dilution_gpu/${SAMPLE}}"
+BAM="${BAM:-${DIR}/${SAMPLE}.sscs.panel.bam}"   # shared panel BAM, no indelqual tags
+
+# ---- Outputs ----
+RCDIR="${DIR}/sinvict_readcount"      # SiNVICT reads a DIRECTORY of readcount files
+OUTDIR="${DIR}/sinvict_out"           # must be empty
+
+# SiNVICT param: error-rate at default 0.01 for this blind pass.
+# NOTE: reset -e from the BNC-measured SSCS consensus error floor once that model exists.
+ERATE="${ERATE:-0.01}"
+
+echo "== SiNVICT blind run: ${SAMPLE} =="
+echo "REF=$REF"; echo "BED=$BED"; echo "BAM=$BAM"
+
+# Fail loudly if the shared BAM is missing.
+[ -f "$BAM" ] || { echo "FATAL: shared panel BAM not found: $BAM" >&2; exit 1; }
+
+# Fresh output/readcount dirs (SiNVICT requires an empty output dir).
+rm -rf "$RCDIR" "$OUTDIR"
+mkdir -p "$RCDIR" "$OUTDIR"
+
+# Step 1: bam-readcount on the panel BAM. Quality mins at 0 (consensus reads pre-validated);
+# warnings silenced; max-count default (1e7) far exceeds depth so no truncation.
+"$BAMREADCOUNT" -w 0 -q 0 -b 0 -f "$REF" -l "$BED" "$BAM" > "${RCDIR}/${SAMPLE}.readcount"
+echo "readcount lines: $(wc -l < "${RCDIR}/${SAMPLE}.readcount")"
+
+# Step 2: SiNVICT on the readcount DIRECTORY (equals-syntax flags, per binary usage string).
+"$SINVICT" -e="$ERATE" -t="$RCDIR" -o="$OUTDIR"
+
+# Step 3: report the six progressive output levels.
+echo "== SiNVICT output levels =="
+for L in 1 2 3 4 5 6; do
+  f="${OUTDIR}/calls_level${L}.sinvict"
+  [ -f "$f" ] && echo "  level${L}: $(wc -l < "$f") calls" || echo "  level${L}: (none)"
+done
+echo "Raw comparison point = calls_level1.sinvict"

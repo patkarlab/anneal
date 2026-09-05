@@ -1,0 +1,16 @@
+#!/bin/bash
+#PBS -N bwa_index
+#PBS -q long
+#PBS -l nodes=1:ppn=4
+#PBS -l mem=16gb
+#PBS -l walltime=04:00:00
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/bwa_index.out
+#PBS -e /home/patkarlab-clinical/pipelines/anneal/bwa_index.err
+#PBS -m ae
+eval "$(/home/patkarlab-clinical/miniconda3/bin/conda shell.bash hook)"
+conda activate anneal
+mkdir -p /home/patkarlab-clinical/references/hg38_broad_bwa
+cd /home/patkarlab-clinical/references/hg38_broad_bwa
+ln -sf ../hg38_broad/Homo_sapiens_assembly38.masked.fasta .
+bwa index Homo_sapiens_assembly38.masked.fasta
+echo "bwa index exit: $? at $(date)"

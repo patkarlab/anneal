@@ -1,0 +1,33 @@
+#!/bin/bash
+#PBS -N anneal_pb_test
+#PBS -q a40
+#PBS -l select=1:ncpus=16:ngpus=1:mem=120gb
+#PBS -l walltime=06:00:00
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/results_pb/pb_test.out
+#PBS -e /home/patkarlab-clinical/pipelines/anneal/results_pb/pb_test.err
+#PBS -m ae
+
+cd /home/patkarlab-clinical/pipelines/anneal
+source /home/patkarlab-clinical/.cargo/env
+eval "$(/home/patkarlab-clinical/miniconda3/bin/conda shell.bash hook)"
+conda activate anneal
+
+mkdir -p /home/patkarlab-clinical/pipelines/anneal/results_pb
+
+docker image inspect nvcr.io/nvidia/clara/clara-parabricks:4.3.1-1 &>/dev/null \
+  || docker load -i /home/patkarlab-clinical/pipelines/parabricks_4.3.1.tar
+
+./target/release/anneal run \
+    --fastq1 /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R1_001.fastq.gz \
+    --fastq2 /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R2_001.fastq.gz \
+    --reference /home/patkarlab-clinical/references/hg38_broad_bwa/Homo_sapiens_assembly38.masked.fasta \
+    --output /home/patkarlab-clinical/pipelines/anneal/results_pb \
+    --aligner parabricks \
+    --parabricks-docker \
+    --bpattern NNNSS \
+    --cutoff 0.6 \
+    --singleton-correction \
+    --no-gpu \
+    -vv
+
+echo "Stage 1 (Parabricks) exit: $? at $(date)"

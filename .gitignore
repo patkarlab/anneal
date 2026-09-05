@@ -70,7 +70,6 @@ target_*/
 __pycache__/
 
 # preserved but not published
-attic/
 
 # patient data - diagnosis marker lists must never be committed
 *.markers.tsv
