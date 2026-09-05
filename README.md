@@ -1,15 +1,20 @@
 # anneal
 
-**anneal is a duplex-sequencing pipeline for measurable residual disease (MRD)
-in acute myeloid leukaemia.** It converts UMI-tagged paired-end reads into
-single-strand (SSCS) and duplex (DCS) consensus reads, calls low-frequency
-substitutions and indels, annotates them, and scores every candidate against
-a per-site background error model built from biological negative controls.
+anneal is a duplex-sequencing pipeline for measurable residual disease
+(MRD) in acute myeloid leukaemia.
 
-**Design principle:** candidate generation and scoring never see the
-patient's known mutations. Stages 1–5 are blind; tracking a patient's
-diagnosis markers is a separate step on the finished consensus BAMs, after
-the evidence exists.
+Duplex sequencing tags every DNA molecule with a unique molecular
+identifier before amplification and reads both of its strands
+independently. A base is accepted only if the two strands agree, which
+removes the errors from PCR, sequencing and DNA damage that affect one
+strand at a time. What can then be detected at a site is set by how many
+duplex molecules cover it and by how much background that site shows in
+healthy controls. anneal implements the whole of this from FASTQ to a scored
+call table for the AML MRD panel: alignment, consensus construction, variant
+calling, annotation, and scoring of every candidate against a per-site
+background model measured on eight healthy-control libraries.
+
+![anneal: duplex consensus and the pipeline](docs/anneal_pipeline.png)
 
 Version 0.3.1.
 
@@ -74,16 +79,9 @@ scored on every later sample.
 
 ## Validation
 
-| Test | Result |
-|------|--------|
-| Duplex engine correction (0.3.0) | DCS error rate on the dilution top rung 2.9e-04 → 7.6e-05 at unchanged depth; C>A (8-oxoG) down 29× |
-| NPM1 type A, two-fold dilution G→J | 0.31% → 0.16% → 0.09% → not detected against a 0.04% limit |
-| IDH2 R140Q, same series | Detected at 0.34%; lost from H on DCS when duplex molecules ran out, still seen by SSCS at 0.095% |
-| Untargeted calls across the series | 111 at the top rung, then a flat 45 of germline and diluent constants |
-| Front-door reproduction | A diagnostic sample rerun from FASTQ gave identical consensus statistics and identical calls to its by-hand run |
-| Limit at ~2,800× duplex depth | ~0.1% for three molecules; 0.05% needs ~6,000× |
-
-Full tables in `CHANGELOG.md`.
+At about 2,800× duplex depth the limit of detection is about 0.1% for
+three molecules; 0.05% needs about 6,000×. The validation record is in
+`CHANGELOG.md`.
 
 ## Current limitations
 
