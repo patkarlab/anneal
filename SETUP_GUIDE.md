@@ -192,13 +192,15 @@ results_bnc/beta_matrix_DCS.txt   results_bnc/beta_matrix_SSCS.txt      (+ .repo
 results_bnc/indel_blocklist.DCS.patched.tsv   results_bnc/indel_blocklist.SSCS.patched.tsv
 ```
 
-They are data, not code, and are not in the repository. On a new
-installation they are copied from the reference installation, or rebuilt:
-run the eight control FASTQs through stage 1 (`jobs/anneal_e2e.pbs` with
-`--stages 1`), place the consensus BAMs under `results_bnc_patched/<control>/`,
-then `qsub jobs/rebuild_background.pbs` (matrices) and
+They are versioned with the code (about 29 MB) and arrive with the clone,
+so a fresh installation runs Stage 5 without further files. Rebuilding is
+only needed when the controls or the consensus engine change: run the eight
+control FASTQs through stage 1 (`jobs/anneal_e2e.pbs` with `--stages 1`),
+place the consensus BAMs under `results_bnc_patched/<control>/`, then
+`qsub jobs/rebuild_background.pbs` (matrices) and
 `scripts/error_model/build_indel_blocklist_v2.py` (blocklists). A rebuild
-must reproduce the validation in `CHANGELOG.md` before it is used.
+must reproduce the validation in `CHANGELOG.md` before it is committed in
+place of the current files.
 
 ## 7. Verify the installation
 
