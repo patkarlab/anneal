@@ -83,18 +83,6 @@ At about 2,800× duplex depth the limit of detection is about 0.1% for
 three molecules; 0.05% needs about 6,000×. The validation record is in
 `CHANGELOG.md`.
 
-## Current limitations
-
-- One low-coverage probe (CEBPA) is non-evaluable at every dilution rung.
-- A TP53 intronic position where controls disagree widely is effectively
-  non-evaluable.
-- Insertion alleles containing N (strand disagreement inside the insertion)
-  are excluded at candidate build, not yet at the scanner.
-- Indels have a recurrence blocklist but no per-site statistical model; a
-  three-read indel absent from the controls is reported, tiered `mrd_floor`.
-- Changing the consensus cutoff (0.6) or the caller's tail-position
-  behaviour requires rebuilding the background model and revalidating.
-
 ## Requirements
 
 CUDA GPU node with Parabricks through Apptainer; Rust toolchain; conda
