@@ -120,7 +120,13 @@ for track in ${SCORE_TRACKS}; do
         ${SCORE_EXTRA_ARGS} \
         --out "${calls}"
 
+    # Readable view: label split into columns, protein-altering consequences
+    # only, annotation joined; the calls table stays the record.
+    report="${SCORED_DIR}/${SAMPLE}.${track}.report.tsv"
+    python "${ERROR_MODEL_DIR}/report_calls.py" --calls "${calls}" --out "${report}" \
+        ${annot_args[@]+"${annot_args[@]}"}
     echo "  calls: ${calls}"
+    echo "  report: ${report}"
     awk -F'\t' 'NR==1 { for (i = 1; i <= NF; i++) if ($i == "call") ci = i; next }
                 ci { n[$ci]++ }
                 END { for (k in n) printf "    %-16s %d\n", k, n[k] }' "${calls}"
