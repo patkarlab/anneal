@@ -120,6 +120,23 @@ for track in ${SCORE_TRACKS}; do
         ${SCORE_EXTRA_ARGS} \
         --out "${calls}"
 
+    # Tier is presentational; the call is unchanged. From VAF and evidence:
+    #   high_vaf   DETECTED at >= TIER_HIGH_VAF %  (germline or a major clone)
+    #   mid_vaf    DETECTED at >= TIER_MID_VAF %
+    #   mrd        DETECTED below that
+    #   mrd_floor  DETECTED indel at <= 3 reads (minimum evidence, no background model)
+    if ! head -1 "${calls}" | grep -q $'\ttier$'; then
+        awk -F'\t' -v OFS='\t' -v hi="${TIER_HIGH_VAF:-20}" -v mid="${TIER_MID_VAF:-5}" '
+            NR == 1 { print $0, "tier"; next }
+            { t = ""
+              if ($18 == "DETECTED") {
+                  v = $10 + 0
+                  if (v >= hi) t = "high_vaf"
+                  else if (v >= mid) t = "mid_vaf"
+                  else if ($7 != "snv" && $8 <= 3) t = "mrd_floor"
+                  else t = "mrd" }
+              print $0, t }' "${calls}" > "${calls}.tmp" && mv "${calls}.tmp" "${calls}"
+    fi
     # Readable view: label split into columns, protein-altering consequences
     # only, annotation joined; the calls table stays the record.
     report="${SCORED_DIR}/${SAMPLE}.${track}.report.tsv"

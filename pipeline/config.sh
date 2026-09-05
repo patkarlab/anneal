@@ -160,3 +160,7 @@ INDEL_MIN_CONTROLS="${INDEL_MIN_CONTROLS:-6}"
 VV_URL="${VV_URL:-https://rest.variantvalidator.org}"
 VV_CACHE="${VV_CACHE:-${ANNEAL_ROOT}/vv_cache.json}"
 VV_IN_STAGE3="${VV_IN_STAGE3:-false}"
+
+# ---- Stage 5 tiers (presentational; the call is unchanged) ----
+TIER_HIGH_VAF="${TIER_HIGH_VAF:-20}"
+TIER_MID_VAF="${TIER_MID_VAF:-5}"
