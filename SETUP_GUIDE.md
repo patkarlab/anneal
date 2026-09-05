@@ -1,348 +1,165 @@
-# Anneal 0.1.0 -- Setup Guide
+# anneal: setup guide
 
-Step-by-step instructions for deploying the Anneal duplex sequencing pipeline
-(consensus + variant calling, with optional annotation) on a Linux server.
+Installing the pipeline on a PBS cluster with NVIDIA GPU nodes. Version
+0.3.x. Running it once installed is in `SOP.md`.
 
-Paths shown under `/goast/hemat_data/...` are examples from one deployment.
-Substitute your own server's paths throughout.
-
----
+The reference installation is `~/pipelines/anneal` on the BioInfinix
+cluster (`patkarlab-clinical`, login node `ln1`): PBS Pro, A40 GPU nodes,
+Apptainer as an environment module, no Docker daemon and no internet on the
+compute nodes. Paths below are that installation's; every one of them is set
+in `pipeline/config.sh` and can be changed there.
 
 ## Prerequisites
 
-- Linux (Ubuntu/CentOS/Rocky)
-- gcc/g++ (used as the Rust linker; `sudo apt install build-essential` or `sudo yum install gcc gcc-c++`)
-- At least 128 GB RAM (for bwa-mem2 alignment of hg38)
-- At least 500 GB free disk (reference genomes + sequencing data + outputs)
-- Internet access (for initial tool downloads)
+- A CUDA GPU node for alignment (Parabricks 4.3.1 runs on A40s; 16 CPUs and
+  100 GB RAM per sample are what the jobs request).
+- CPU nodes for everything else.
+- Disk: about 150–200 GB of transient space per sample in flight, plus the
+  references (~20 GB), the VEP cache (~20 GB) and ANNOVAR databases.
+- gcc (Rust linker), Miniconda, git.
+- Internet access on the login node (conda, VEP cache, VariantValidator API).
 
----
-
-## Step 1: Install Miniconda (skip if already installed)
-
-```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
-eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
-conda init bash
-source ~/.bashrc
-```
-
----
-
-## Step 2: Create the conda environment
-
-Use `--override-channels` if default channels require TOS acceptance:
+## 1. Conda environments
 
 ```bash
+# analysis environment
 conda create -n anneal -y --override-channels -c conda-forge -c bioconda \
-    python=3.11 \
-    samtools \
-    bwa-mem2 \
-    matplotlib \
-    pandas \
-    numpy
-
+    python=3.11 samtools pysam numpy pandas matplotlib requests
 conda activate anneal
+# .NET 8 runtime for Pisces, installed into the environment
+conda install -y -c conda-forge dotnet-runtime=8
 
-# Verify
-samtools --version | head -1
-python3 --version
+# VEP has its own environment so its Perl does not collide with the analysis one
+conda create -n vep -y --override-channels -c conda-forge -c bioconda ensembl-vep
 ```
 
-### bwa-mem2 wrapper (only if your CPU lacks AVX512)
+`config.sh` activates `anneal` through `activate_conda()`, which relaxes
+`set -u` across activation (the .NET activation hook references an unset
+variable) and prepends `bin/` to PATH for the Parabricks shim.
 
-The bwa-mem2 auto-launcher selects `avx512bw` by default. On CPUs without
-AVX512 (e.g. the gandalf node) this fails, and you must create a wrapper that
-forces a supported SIMD binary:
+## 2. Build the consensus binary
 
 ```bash
-mkdir -p ~/anneal/bin
-
-# Test which SIMD level works (try avx2 first, then sse42)
-/path/to/bwa-mem2-2.2.1_x64-linux/bwa-mem2.avx2 version
-
-# Create wrapper pointing to the working binary
-cat > ~/anneal/bin/bwa-mem2 << 'EOF'
-#!/bin/bash
-exec /path/to/bwa-mem2-2.2.1_x64-linux/bwa-mem2.avx2 "$@"
-EOF
-chmod +x ~/anneal/bin/bwa-mem2
-
-# Verify
-~/anneal/bin/bwa-mem2 version
+git clone git@github.com:patkarlab/anneal.git ~/pipelines/anneal
+cd ~/pipelines/anneal
+source ~/.cargo/env 2>/dev/null || (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source ~/.cargo/env)
+bash build.sh            # CPU build into target_cpu/release/anneal, runs the unit tests
 ```
 
-The pipeline's `activate_conda()` function in config.sh already prepends
-`${ANNEAL_ROOT}/bin` to PATH, so the wrapper is picked up automatically.
-If avx2 also fails, try `.sse42`. If you installed bwa-mem2 from conda
-(Step 2) and your CPU supports it, no wrapper is needed.
+The CPU build is the validated one; `config.sh` points `ANNEAL` at it. There
+is a `gpu` cargo feature for a CUDA consensus path, but it is not used:
+consensus runs on the CPU in every validated configuration, and stage 1
+passes `--no-gpu`.
 
----
+## 3. Parabricks through Apptainer
 
-## Step 3: Install Rust (skip if already installed)
+The binary calls Parabricks with a hard-coded `docker run`. On a cluster
+without a Docker daemon, a shim named `docker` translates that into
+`apptainer exec`.
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source $HOME/.cargo/env
+# once: the Parabricks image as a SIF (from the Docker archive; no NGC login needed if you have the tar)
+cd ~/pipelines
+apptainer build parabricks_4.3.1.sif docker-archive://parabricks_4.3.1.tar
 
-# Verify
-rustc --version
-cargo --version
+# the shim, on the PATH that activate_conda() prepends
+cp ~/pipelines/anneal/pipeline/docker-apptainer-shim.sh ~/pipelines/anneal/bin/docker
+chmod +x ~/pipelines/anneal/bin/docker
 ```
 
----
+Two things every GPU job must do, and the reference jobs in `jobs/` do:
+`module load apptainer/1.5.1` (the module is not on the default PATH of
+compute nodes, so interactive tests on the login node pass where batch jobs
+fail) and use `config.sh` defaults `ALIGNER=parabricks`,
+`PARABRICKS_FLAGS=--parabricks-docker`, `ALIGNER_ARGS="--num-gpus 1"` (the
+container sees one GPU; without the flag Parabricks asks for both).
 
-## Step 4: Set up directory structure
+Check from a GPU node:
 
 ```bash
-# Input FASTQs and output results directories.
-# Example layout from one deployment:
-#   /goast/hemat_data/duplex_fastqs/dilution/   (input FASTQs)
-#   /goast/hemat_data/duplex_results/           (pipeline outputs)
-
-# On a fresh server:
-mkdir -p /path/to/sequences
-mkdir -p /path/to/results
+module load apptainer/1.5.1
+docker run --rm --gpus all nvcr.io/nvidia/clara/clara-parabricks:4.3.1-1 pbrun version   # expect: pbrun: 4.3.1-1
 ```
 
----
+Fallback without a GPU: `ALIGNER=bwa-mem2` with a bwa-mem2 index of the
+masked reference and a CPU queue; alignment then takes an hour or more per
+sample and the run is not the validated configuration.
 
-## Step 5: Clone and build Anneal
+## 4. References
+
+| Purpose | File | Notes |
+|---------|------|-------|
+| Alignment and background model | `~/references/hg38_broad_bwa/Homo_sapiens_assembly38.masked.fasta` | Broad hg38 with the U2AF1 region masked; needs a classic `bwa index` (`.amb .ann .bwt .pac .sa`) for Parabricks |
+| Indel scan and annotation | `~/references/hg38_broad/Homo_sapiens_assembly38.fasta` | unmasked, `samtools faidx` |
+| Pisces | `~/references/pisces_hg38_panel/` | one FASTA per panel chromosome plus `GenomeSize.xml`; the full 3,366-contig reference makes Pisces run out of memory |
+| VEP | `~/references/vep_cache/` | GRCh38 cache, offline (`vep_install -a cf -s homo_sapiens -y GRCh38`) |
+| ANNOVAR | `~/programs/annovar/`, `~/references/humandb/` | the databases named in `scripts/annotate_variants.py` (refGene, COSMIC, ClinVar, gnomAD, dbSNP) |
+| getITD | `~/tools/getitd/` | `git clone https://github.com/tjblaette/getitd.git` |
+| Pisces | `~/programs/pisces/Pisces_5.2.10.49/Pisces.dll` | runs on the .NET 8 runtime with `DOTNET_ROLL_FORWARD=Major`, set by stage 2 |
+| Panel | `AML_MRD_DUPLEX_probes_hg38_sortd.bed` | in the repository; coordinates are read from columns 2–3 only |
+
+The Pisces panel reference is built from the masked FASTA: `samtools faidx`
+each chromosome that appears in the BED into its own file under
+`pisces_hg38_panel/`, then write `GenomeSize.xml` listing each contig and its
+length. The existing directory is in place; recreate it only if lost.
+
+## 5. Configuration
+
+`pipeline/config.sh` holds every path, tool and parameter, each as
+`VAR="${VAR:-default}"` so it can be overridden from the environment. After
+installation, check the block that names the machine:
 
 ```bash
-cd ~
-
-# Clone from GitHub
-git clone https://github.com/<your-org>/anneal.git
-cd anneal
-
-# Build Anneal (CPU-only, no GPU needed)
-bash deploy.sh
-
-# Build the Rust variant caller
-cd mpileup_variant_caller
-cargo build --release
-cd ..
-
-# Verify both binaries
-./target/release/anneal --help
-./mpileup_variant_caller/target/release/call_variants
+grep -n "^REFERENCE=\|^REFERENCE_UNMASKED=\|^ANNEAL=\|^VEP_CACHE=\|^ANNOVAR_DIR=\|^ANNOVAR_DB=\|^GETITD_DIR=\|^PISCES_DLL=\|^DOTNET_DIR=\|^PISCES_GENOME=" pipeline/config.sh
 ```
 
----
+Do not change the analysis parameters (cutoff, quality, singleton
+correction, alpha, blocklist threshold, estimator settings): they are the
+validated configuration, and `SOP.md` section 3 lists them.
 
-## Step 6: Reference genome
+## 6. Background model assets
 
-You need a hg38 reference FASTA with bwa-mem2 indexes (`.0123`, `.amb`,
-`.ann`, `.bwt.2bit.64`, `.pac`, `.fai`). If you already have one, point
-`config.sh` to it. Otherwise:
+Stage 5 needs the per-track background matrices and indel blocklists, built
+once from eight biological negative controls:
+
+```
+results_bnc/beta_matrix_DCS.txt   results_bnc/beta_matrix_SSCS.txt      (+ .report.tsv)
+results_bnc/indel_blocklist.DCS.patched.tsv   results_bnc/indel_blocklist.SSCS.patched.tsv
+```
+
+They are data, not code, and are not in the repository. On a new
+installation they are copied from the reference installation, or rebuilt:
+run the eight control FASTQs through stage 1 (`jobs/anneal_e2e.pbs` with
+`--stages 1`), place the consensus BAMs under `results_bnc_patched/<control>/`,
+then `qsub jobs/rebuild_background.pbs` (matrices) and
+`scripts/error_model/build_indel_blocklist_v2.py` (blocklists). A rebuild
+must reproduce the validation in `CHANGELOG.md` before it is used.
+
+## 7. Verify the installation
+
+Run one sample end to end and compare with the expectations:
 
 ```bash
-# Download and index (one-time, ~1 hour)
-mkdir -p ~/references/hg38_broad
-cd ~/references/hg38_broad
-wget https://storage.googleapis.com/genomics-public-data/resources/broad/hg38/v0/Homo_sapiens_assembly38.fasta
-samtools faidx Homo_sapiens_assembly38.fasta
-bwa-mem2 index Homo_sapiens_assembly38.fasta
+cd ~/pipelines/anneal
+mkdir -p logs
+qsub -v FULL=<sample>_S<n>,OUT=/scratch/<user>/verify,FQ=/scratch/<user>/<fastq_dir> jobs/anneal_e2e.pbs
 ```
 
----
+On completion the log ends with `run_pipeline exit: 0`, `<sample>/scored/`
+holds four tables, and `consensus/<sample>.stats.txt` shows a singleton rate
+of 55–60% and DCS recovery of 15–22% on a typical library. A sample run
+twice from FASTQ gives identical consensus statistics and identical calls;
+the pipeline is deterministic on identical input and code.
 
-## Step 7: Copy your BED file and sequences
+## Troubleshooting installation
 
-The BED file is bundled in the repo at `AML_MRD_DUPLEX_probes_hg38_sortd.bed`.
-
-Copy your FASTQs into the sequences directory:
-
-```bash
-cp /path/to/fastqs/*.fastq.gz /path/to/sequences/
-```
-
----
-
-## Step 8: Edit config.sh
-
-Open `~/anneal/pipeline/config.sh` and verify the paths match your setup.
-Most paths auto-resolve from the directory structure. Key lines to check:
-
-```bash
-nano ~/anneal/pipeline/config.sh
-```
-
-```bash
-# -- These auto-resolve, usually no edit needed --
-ANNEAL="${ANNEAL_ROOT}/target/release/anneal"
-VARIANT_CALLER="${ANNEAL_ROOT}/mpileup_variant_caller/target/release/call_variants"
-BEDFILE="${ANNEAL_ROOT}/AML_MRD_DUPLEX_probes_hg38_sortd.bed"
-
-# -- Edit these to match your environment --
-REFERENCE="/path/to/references/hg38_broad/Homo_sapiens_assembly38.fasta"
-SEQUENCES_DIR="/path/to/sequences"
-RESULTS_DIR="/path/to/results"
-```
-
----
-
-## Step 9: Create a manifest
-
-```bash
-cd ~/anneal
-
-# Auto-generate from your sequences directory
-./target/release/anneal manifest \
-    --dir /path/to/sequences/ \
-    -o manifest.tsv
-
-# Verify
-cat manifest.tsv
-```
-
----
-
-## Step 10: Test on a single sample
-
-```bash
-cd ~/anneal
-conda activate anneal
-
-bash pipeline/run_pipeline.sh \
-    SAMPLE_NAME \
-    /path/to/sequences/SAMPLE_R1_001.fastq.gz \
-    /path/to/sequences/SAMPLE_R2_001.fastq.gz \
-    /path/to/results/
-```
-
-Check the output:
-
-```bash
-ls -lh /path/to/results/SAMPLE_NAME/consensus/
-ls -lh /path/to/results/SAMPLE_NAME/variants/
-```
-
----
-
-## Step 11: Run full batch
-
-```bash
-cd ~/anneal
-
-# Foreground (blocks terminal, shows progress)
-conda activate anneal
-bash pipeline/run_pipeline_batch.sh manifest.tsv /path/to/results/
-
-# OR background (survives SSH disconnect)
-bash pipeline/launch_pipeline.sh manifest.tsv /path/to/results/
-
-# Monitor background run
-tail -f /path/to/results/pipeline.log
-```
-
----
-
-## Optional: Stage 3 annotation
-
-Stage 3 (VEP + ANNOVAR + VariantValidator) is off by default and has heavier
-dependencies. Enable it once those tools are installed:
-
-```bash
-# Single sample
-bash pipeline/run_pipeline.sh SAMPLE R1 R2 /path/to/results/ --annotate --skip-vv
-
-# Batch
-bash pipeline/run_pipeline_batch.sh manifest.tsv /path/to/results/ --annotate --skip-vv
-```
-
-`--skip-vv` skips the VariantValidator HGVS step (which requires its Docker
-container). Drop `--skip-vv` once VariantValidator is available.
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| `samtools: command not found` | Run `conda activate anneal` first |
-| `cargo: command not found` | Run `source $HOME/.cargo/env` |
-| bwa-mem2 avx512bw error | Create `bin/bwa-mem2` wrapper forcing `.avx2` binary (see Step 2) |
-| Conda TOS error | Add `--override-channels` or run `conda tos accept ...` |
-| `bwa-mem2 index` killed by OOM | Need at least 64 GB RAM for hg38 indexing |
-| Anneal fails at alignment | Check that bwa-mem2 index files exist alongside the FASTA |
-| Plot not generated | `pip install matplotlib pandas numpy` in the anneal env |
-| Permission denied on scripts | `chmod +x ~/anneal/pipeline/*.sh` |
-
----
-
-## Expected directory layout after setup
-
-```
-~/anneal/                              # ANNEAL_ROOT (pipeline code)
-  pipeline/config.sh                   # all paths configured here
-  target/release/anneal                # compiled binary
-  mpileup_variant_caller/target/release/call_variants
-  scripts/plot_family_sizes.py
-  bin/bwa-mem2                         # AVX2 wrapper (only if CPU lacks AVX512)
-  manifest.tsv                         # sample sheet
-  AML_MRD_DUPLEX_probes_hg38_sortd.bed # target panel (bundled)
-
-/path/to/sequences/                    # input FASTQs
-/path/to/results/                      # pipeline outputs
-  SAMPLE_NAME/
-    consensus/
-    variants/
-    annotated/                         # only if --annotate used
-
-/path/to/references/
-  hg38_broad/Homo_sapiens_assembly38.fasta  # hg38 + bwa-mem2 indexes
-```
-
-## GPU alignment: Parabricks
-
-anneal calls Parabricks through a hardcoded `docker run`. On this cluster that
-does not work from batch jobs: the Docker daemon socket is permission-denied on
-the compute nodes. Apptainer is available and is used instead.
-
-### One-off setup
-
-Convert the Parabricks Docker archive to a SIF. No NGC login needed if you
-already have the tar:
-
-    cd ~/pipelines
-    apptainer build parabricks_4.3.1.sif docker-archive://parabricks_4.3.1.tar
-
-Install the shim, which rewrites `docker run` into `apptainer exec`:
-
-    mkdir -p ~/bin
-    cp pipeline/docker-apptainer-shim.sh ~/bin/docker
-    chmod +x ~/bin/docker
-
-### In every batch job
-
-Apptainer is an environment module on the compute nodes and is NOT on the
-default PATH, although it is on the login node. Interactive tests therefore
-pass where batch jobs fail. Load it explicitly:
-
-    module load apptainer/1.5.1
-
-and put the shim ahead of any real docker:
-
-    export PATH="$HOME/bin:$PATH"
-    export PARABRICKS_SIF=$HOME/pipelines/parabricks_4.3.1.sif
-
-Verify before committing to a long run:
-
-    docker run --rm --gpus all --volume "$PWD:/workdir" --workdir /workdir \
-        nvcr.io/nvidia/clara/clara-parabricks:4.3.1-1 pbrun version
-
-This should print `pbrun: 4.3.1-1`. If it reports `apptainer: not found`, the
-module was not loaded.
-
-`jobs/batch_all.pbs` does all of this and fails fast if the check does not pass.
-
-### Fallback
-
-If apptainer is unavailable, set `ALIGNER=bwa` and run alignment on a CPU queue.
-The bwa index for the masked reference already exists; bwa-mem2 would need its
-own index built. Alignment is then roughly 55 minutes per sample instead of
-about 10. Consensus still needs a GPU, so alignment and consensus must be split
-into separate jobs.
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `apptainer: not found` inside a job | module not loaded | `module load apptainer/1.5.1` in the job |
+| `Aligner 'parabricks' not found at 'pbrun'` | shim not on PATH or flag missing | `bin/docker` present and executable; `PARABRICKS_FLAGS=--parabricks-docker` |
+| Parabricks: "requires 2 GPUs" | container sees one | `ALIGNER_ARGS="--num-gpus 1"` |
+| Pisces: framework version error | roll-forward | stage 2 sets `DOTNET_ROLL_FORWARD=Major`; check `DOTNET_DIR` |
+| Pisces killed, out of memory | full reference | use the panel reference in `PISCES_GENOME` |
+| VEP: `Compilation failed in require ... base.pm` | Perl from another environment | VEP is invoked only through `run_vep()`, which strips the analysis env's Perl from PATH and clears `PERL5LIB` |
+| `cargo` not found | Rust not on PATH | `source ~/.cargo/env` |
+| Linker errors building the binary | no gcc | `build.sh` sets `RUSTFLAGS="-C linker=gcc"`; install `build-essential` or `gcc gcc-c++` |

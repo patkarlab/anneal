@@ -1,413 +1,247 @@
-# Anneal -- Architecture & Design Notes
-
-Guidance for working in this repository. Anneal is a duplex consensus pipeline
-for UMI-based error suppression and ultra-sensitive variant detection.
-
-## Project Overview
-
-Anneal takes UMI-tagged paired-end FASTQs and produces duplex consensus BAMs,
-then calls SNVs and indels from those high-confidence consensus reads. An
-optional annotation stage adds functional annotation and HGVS validation.
-
-The core engine is written in Rust with CUDA acceleration; GPU is the only
-supported and validated configuration. Variant calling uses Pisces. MRD calling
-is marker tracking against a per-site background model -- see the MRD section
-below. Orchestration is a set of bash stage scripts driven by a single shared
-`config.sh`.
-
-## Pipeline Stages
-
-| Stage | Name | Tool | Output |
-|-------|------|------|--------|
-| 1 | Consensus generation | `anneal` (Rust) | `{sample}.sscs.sc.sorted.bam`, `{sample}.dcs.sc.sorted.bam`, stats, family sizes |
-| 2 | Variant calling | Pisces 5.2.10.49 | `{sample}.{sscs,dcs}.pisces.genome.vcf` |
-| 3 | Annotation (optional) | VEP + ANNOVAR + VariantValidator | `{sample}.{dcs,sscs}.annotated/filtered/clinical.tsv` |
-| 4 | FLT3-ITD (optional) | getITD | `{sample}.flt3_itds.tsv` |
-
-Stage 1 internals: barcode extraction -> BWA-MEM2 alignment -> family grouping
--> SSCS (single-strand consensus) -> singleton correction -> DCS (duplex
-consensus).
-
-Default run is stages 1,2. Stage 3 is opt-in via `--annotate` because it
-depends on VEP, ANNOVAR, and the VariantValidator Docker container.
-
-## File Structure
-
-```
-src/                          # Rust consensus engine
-  barcode/                    # UMI extraction
-  grouping/                   # family grouping
-  consensus/                  # SSCS, DCS, pipeline, config
-  singleton/                  # singleton correction
-  cuda/                       # optional GPU kernels (PTX + .cu)
-  manifest.rs                 # manifest subcommand
-  main.rs
-pipeline/
-  config.sh                   # shared config -- edit paths here
-  stage1_consensus.sh
-  stage2_variant_calling.sh
-  stage3_annotate.sh          # optional
-  stage4_flt3.sh              # optional, FLT3-ITD via getITD
-  docker-apptainer-shim.sh    # copy to ~/bin/docker; see SETUP_GUIDE
-  run_pipeline.sh             # single sample
-  run_pipeline_batch.sh       # manifest-driven batch
-  launch_pipeline.sh          # background launcher (nohup)
-scripts/                      # python: plotting + annotation helpers
-  plot_family_sizes.py
-  annotate_variants.py
-  filter_variants.py
-  validate_hgvs.py
-deploy.sh                     # build script (cpu | gpu)
-AML_MRD_DUPLEX_probes_hg38_sortd.bed
-```
-
-## Key Design Decisions
-
-### Why only 2 BAM outputs?
-SSCS (with singleton correction) and DCS are the two consensus types that
-matter clinically. SSCS maximizes sensitivity; DCS maximizes specificity
-(both strands must agree). Intermediate BAMs are cleaned up automatically.
-
-### Consensus cutoff 0.6
-The base-call agreement fraction within a family. 0.6 balances retaining
-real low-frequency signal against over-calling noise; tunable via `--cutoff`.
-
-### Pisces as the variant caller
-Chosen over LoFreq, VarDict, Mutect2 and SiNVICT on the dilution series. Two
-accommodations, both inside stage 2: the XV tag is stripped, since anneal writes
-it as a string and Pisces expects an integer; and a panel-restricted masked
-genome is used, since Pisces exhausts memory on the full 3,366-contig hg38
-reference.
-
-### UMI-aware callers are unnecessary downstream
-Because consensus is already built per UMI family upstream, the Stage 2 caller
-operates on consensus reads and does not need to be UMI-aware itself.
-
-## Configuration (config.sh)
-
-`ANNEAL_ROOT` auto-resolves from the script location, and most binary/reference
-paths derive from it. The variables you actually edit per server:
-
-- `REFERENCE` -- hg38 FASTA with bwa-mem2 indexes
-- `BEDFILE` -- target panel (bundled)
-- `SEQUENCES_DIR`, `RESULTS_DIR` -- input/output
-- `USE_GPU` -- false (CPU) by default
-
-`activate_conda()` sources conda, activates the `anneal` env, and prepends
-`${ANNEAL_ROOT}/bin` to PATH (for the optional bwa-mem2 SIMD wrapper).
-
-## Build & Run
-
-```bash
-bash deploy.sh                                   # build anneal (gpu)
-bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/  # stages 1,2
-bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/ --annotate --skip-vv   # + stage 3
-bash pipeline/run_pipeline.sh SAMPLE R1 R2 out/ --flt3                  # + stage 4
-```
-
-## Changelog
-
-### 0.1.0 -- first public release
-- Removed FLT3-ITD detection (former Stage 3: getITD + FiLT3R + concordance).
-  FLT3 exon regions remain in the panel BED for standard SNV/indel calling.
-- Annotation renumbered from Stage 4 to Stage 3.
-- Server-agnostic paths; no PBS dependency.
-
-## References
-
-- Wang TT, Abelson S, et al. (2019) Nucleic Acids Research, 47(15), e87
-- Kennedy SR, et al. (2014) Nature Protocols, 9(11), 2586-2606
-- ConsensusCruncher: https://github.com/pughlab/ConsensusCruncher
-# MRD calling: marker-tracking configuration
-
-## Scope
-
-anneal calls MRD by tracking a patient's known diagnosis variants into follow-up
-samples. It does not perform untargeted variant discovery at MRD sensitivity.
-
-This is a deliberate restriction, established by dilution experiment rather than
-assumed. Scoring a DCS sample against the background model without restricting
-to a marker list yields roughly 2,000 calls at p < 0.005. That count does not
-change across a 125-fold dilution series:
-
-| rung | untargeted calls (p < 1e-9) | markers detected |
-|------|------------------------------|------------------|
-| G    | 195                          | 3                |
-| H    | 190                          | 2                |
-| I    | 160                          | 1                |
-| J    | 190                          | 0                |
-
-Tumour content falls 5x per rung. The marker count tracks it; the untargeted
-count does not. The surviving untargeted calls are therefore per-sample
-systematic artifact, not signal, and no p-value threshold separates them —
-tightening from 0.005 to 1e-9 reduces the count but leaves it equally flat.
-
-Restricting to the diagnosis-variant list removes the problem rather than
-solving it: with 3-5 positions under test, the artifacts at other positions are
-never examined.
-
-## Configuration
-
-| component | setting |
-|-----------|---------|
-| consensus track | DCS (`dcs.sc.sorted.bam`) |
-| variant caller | Pisces 5.2.10.49 (discovery); marker scoring reads the BAM directly |
-| background model | `beta_matrix_DCS.txt`, Waalkes per-position alpha/beta from 8 BNCs |
-| substitution test | beta-binomial upper tail |
-| indel test | recurrence blocklist (`indel_blocklist.tsv`) |
-| artifact mask | `artifact_mask.combined.bed`, 624 loci |
-| strand filter | reject if alt >= 10 reads and >= 90% on one strand |
-| alpha | 0.005 |
-| minimum alt reads | 2 |
-| scope | patient diagnosis variants only |
-
-### Why the marker scorer does not read a VCF
-
-Pisces applies `MinimumVariantQScore` (default 20) beneath any requested
-`--minvf`. On the BNC panel this censors everything below roughly 7-12 alt
-reads, and because the Q-score is depth-dependent the censoring point moves
-between samples. A marker present at 3 reads in a remission sample would be
-absent from the caller output entirely.
-
-`call_mrd_markers.py` therefore counts from the BAM at each marker position
-regardless of what any caller emitted. Absence in the report means absence in
-the reads.
-
-Reads are counted unfiltered, matching how the beta matrix was built (Pisces on
-the unfiltered `*_pisces.bam`), so both sides of the comparison see the same
-read population.
-
-### Why alpha is 0.005 and not 1e-9
-
-1e-9 was derived to suppress untargeted calls across ~3,600 tested positions. It
-is a multiple-testing correction, and it does not apply when 3-5 positions are
-under test with per-site background already modelled.
-
-Carried into tracking mode it drops real markers. On the G rung:
-
-| marker | p |
-|--------|---|
-| IDH2 R140Q | 8.75e-10 |
-| PTPN11 F285L | 1.74e-09 |
-
-At 1e-9 the first survives by a 14% margin and the second is lost. 0.005 is the
-cutoff in the source method and is appropriate here. Sensitivity is bounded by
-the reported per-locus LoD, not by alpha.
-
-## Limit of detection
-
-Every marker is reported with the smallest alt count that would have reached
-significance at that locus, given the observed depth and that site's background,
-and the VAF that count corresponds to.
-
-A negative marker is only interpretable alongside that number. "Not detected,
-sensitivity 0.03% at this locus" is a result; "not detected" alone is not.
-
-LoD is depth-limited:
-
-| DCS depth | LoD (2 reads) |
-|-----------|---------------|
-| 3,000     | 0.067%        |
-| 5,000     | 0.040%        |
-| 10,000    | 0.020%        |
-| 20,000    | 0.010%        |
-
-## Validated sensitivity
-
-Two arms with different floors. The pipeline should not be described as having a
-single sensitivity figure.
-
-| arm | mechanism | demonstrated |
-|-----|-----------|--------------|
-| indel (NPM1 type A) | blocklist | 0.056% at 3 reads / 5,402 |
-| substitution (IDH2 R140Q) | beta-binomial | 0.056% at 2 reads / 3,594 |
-
-Reported per-locus LoD in that series ranged 0.043% to 0.075% at DCS depths of
-2,800 to 7,000.
-
-Reaching 0.02% requires roughly 10,000x DCS depth, i.e. 2-3x more sequencing
-than the current configuration delivers.
-
-## Dilution validation
-
-Sample DIL-A, two-fold serial dilution across four rungs (G to J).
-
-The expected VAFs recorded on the dilution worksheet are nominal, calculated
-from dilution factors rather than measured. They run 1.5x to 4x away from
-observed at the lower rungs and should not be used as ground truth. The table
-below reports read counts taken directly from the consensus BAMs at each marker
-position, base quality 20.
-
-### IDH2 R140Q, chr15 C>T
-
-| rung | nominal | SSCS | DCS | DCS call |
-|------|---------|------|-----|----------|
-| G | 0.387% | 0.417% (90/21,564) | 0.336% (11/3,274) | detected |
-| H | 0.193% | 0.113% (24/21,255) | 0.056% (2/3,594) | detected |
-| I | 0.097% | 0.024% (5/21,114) | 0 (0/3,324) | not detected |
-| J | 0.048% | 0.049% (10/20,520) | 0 (0/2,829) | not detected |
-
-True content at rung I is 0.024%, below the 0.060% LoD that rung supports, so
-the DCS non-detection is correct. The nominal 0.097% would have implied a false
-negative; the counts show otherwise.
-
-SSCS at rungs I and J is at its own noise floor, not tracking dilution: 10 reads
-at J exceeds 5 at I on equal depth, when J should be half of I. SSCS would have
-returned two quantitative-looking values where DCS correctly reported nothing.
-
-### PTPN11 F285L, chr12 T>C
-
-| rung | nominal | SSCS | DCS | DCS call |
-|------|---------|------|-----|----------|
-| G | 0.032% | 0.083% (15/18,021) | 0.141% (4/2,832) | detected |
-| H | 0.016% | 0.005% (1/20,067) | 0 (0/3,524) | not detected |
-| I | 0.008% | 0.006% (1/17,360) | 0 (0/2,619) | not detected |
-| J | 0.004% | 0.006% (1/17,970) | 0 (0/2,796) | not detected |
-
-Background at this position is one read in roughly 18,000, flat across H, I and
-J. The 15 reads at G are a 15-fold excess over that floor and both tracks agree,
-so the detection is real despite the nominal value sitting below the LoD.
-
-### NPM1 type A insertion, chr5
-
-| rung | nominal | DCS | DCS call |
-|------|---------|-----|----------|
-| G | 0.284% | 0.214% (12/5,620) | detected |
-| H | 0.142% | 0.156% (11/7,039) | detected |
-| I | 0.071% | 0.056% (3/5,402) | detected |
-| J | 0.035% | 0 (0/5,335) | not detected |
-
-Scored through the indel blocklist, not the beta model. Quantitative across
-three rungs; the dropout at J is below the 0.056% LoD for that rung.
-
-### CEBPA H24Afs
-
-Not evaluable at any rung. Depth is 133x to 222x against 2,800x to 7,000x
-elsewhere on the panel, roughly a twenty-fold shortfall. Capture problem, not a
-caller problem. CEBPA should be excluded as a trackable marker until the panel
-is addressed.
-
-### Summary
-
-Every DCS call and non-call across the four markers and four rungs is correct
-when assessed against measured counts. No false positives, no false negatives.
-
-Deepest true detections: NPM1 at 0.056% (3 reads in 5,402), IDH2 at 0.056%
-(2 reads in 3,594).
-
-### Untargeted scoring, same samples
-
-Scored without restricting to the marker list, at p < 1e-9:
-
-| rung | calls |
-|------|-------|
-| G | 195 |
-| H | 190 |
-| I | 160 |
-| J | 190 |
-
-Flat across the series while marker detections fall 3, 2, 1, 0. The untargeted
-survivors are per-sample systematic artifact. This is the basis for restricting
-the assay to marker tracking.
-
-## Known limitations
-
-**CEBPA is not trackable.** The CEBPA probe returns 133-222x against 2,800-7,000x
-elsewhere on the panel, a roughly 20-fold shortfall. It is non-evaluable at every
-dilution rung and will remain so until the capture is addressed. This is a panel
-issue, not a caller issue.
-
-**Background model floors on a literature constant.** 83% of positions in the DCS
-matrix carry the default rather than a fitted value, because 8 BNCs at ~3,000x
-DCS provide roughly 26,000 molecules per site while confirming a rate of
-1/200,000 requires an order of magnitude more. The default is taken from Wang et
-al. NAR 2019 supplementary table 5 (SmallDeep panel). It is not measurable from
-the current control panel.
-
-**Untargeted discovery is not supported.** See Scope.
-
-## Stage 5: background scoring (0.3.0)
-
-Stage 5 is the point at which variant calls and the error model meet. It
-runs per sample and per track (`SCORE_TRACKS`, default `dcs sscs`) and is
-blind: the candidate list is derived from the sample's own reads and no
-diagnosis variant list is read anywhere in stages 1-5.
-
-**Candidates.** `scripts/error_model/build_candidates.py` takes the union of
-the Pisces variants-only VCF and the stage 2b indel table
-(`scan_indels.py`), both VCF-anchored, deduplicated on chrom/pos/ref/alt.
-Multi-allelic VCF records are split. Alleles containing N are excluded: in
-the corrected engine an N inside a consensus read means the two strands
-disagreed at that base, so `G>GN` is an unresolved event, not an allele.
-Each candidate carries a label `Gene|Consequence|HGVSp;src=P|S|PS` from the
-stage 3 tables (P = Pisces, S = indel scan). Output is the header-less
-`chrom pos ref alt label` format that `call_mrd_markers.py` reads.
-
-**Scoring.** `call_mrd_markers.py` counts reads at every candidate directly
-from the consensus BAM (Pisces' Q20 gate would otherwise remove a marker at
-a few reads), scores substitutions against the per-track beta matrix with a
-beta-binomial tail at `--alpha-level 0.005`, and indels against the
-per-track blocklist (`--indel-min-controls 6`, `--min-indel-alt 3`). The
-artifact mask is not passed. Output:
-`scored/{sample}.{track}.calls.tsv`, one row per candidate with alt count,
-depth, VAF, per-orientation counts, background, p-value, minimum callable
-count, per-locus LoD, call and note.
-
-**Strand test.** Duplex reads are both-strand by construction, so
-`alt_fwd`/`alt_rev` on DCS is the alignment orientation of the consensus
-read, not strand of origin. A site covered by one mate only is one-sided
-for reference reads as well. The test is therefore relative: with alt >=
-`--strand-min-alt` (10) and the alt fraction >= `--strand-thresh` (0.90)
-one-sided, a call is rejected only if the alt orientation differs from the
-reference orientation at the same site (Fisher exact, two-sided, p <
-`--strand-p` 1e-3). With no reference reads the absolute rule applies.
-Rows that are one-sided but not biased are annotated
-`one-sided coverage: ref F/R`.
-
-**Marker overlay.** Tracking a patient's diagnosis variants is a separate,
-post-hoc run of `call_mrd_markers.py` with `--markers <patient.tsv>` on the
-stage 1 BAM, using the same matrix and blocklist. For a dilution or
-longitudinal series the baseline sample's candidate list is scored on every
-later sample; scoring each sample's own list produces spurious zeros for
-markers that fell below the caller's gate.
-
-## Background estimator (0.3.0)
-
-`build_background.py` fits one Beta per (position, alt base) from the eight
-BNC consensus BAMs per track. Pileups are taken directly (`-Q 30`), so no
-site is censored by a caller. The mean is the pooled rate under a Jeffreys
-prior, `(k + 0.5) / (N + 1)`, so a site with no observed alt is anchored at
-about `0.5/N` rather than at an external constant.
-
-The concentration (`alpha + beta`) decides how much between-control
-variation the model tolerates:
-
-1. Outlier control. The control with the most alt reads is tested against
-   the pooled rate of the others. If it carries at least `--outlier-min-alt`
-   (3) reads, is a Poisson outlier at `--outlier-p` (1e-3), and its rate is
-   at least `--outlier-min-ratio` (10) times the others', it is dropped for
-   that substitution and the exclusion is written to the report. This keeps
-   one control's clone or library-specific event from setting the site's
-   limit for every patient (IDH2 R140: 5 reads in one control, none in
-   seven). The ratio keeps systematic artifact sites, where every control is
-   high and one is merely highest, with the moment estimator.
-2. Method of moments, only when estimable: `--mom-min-alt` (20) pooled alt
-   reads in at least three non-zero controls. Binomial sampling variance is
-   subtracted from the between-control variance first; the estimate is used
-   when it implies more dispersion than pure binomial sampling.
-3. Otherwise the fallback: binomial concentration divided by `--dispersion`
-   (3.0), a conservative widening.
-
-The report (`beta_matrix_{TRACK}.report.tsv`) records, per substitution,
-controls used, pooled depth and count, alpha, beta, model rate, and a note
+# anneal: architecture and design notes
+
+Version 0.3.x. What the pipeline does and why it does it that way. Running
+it is in `SOP.md`; installing it in `SETUP_GUIDE.md`; the validation record
+and history in `CHANGELOG.md`.
+
+## 1. Overview
+
+anneal turns UMI-tagged paired-end reads from the AML MRD hybrid-capture
+panel (182 probes, hg38) into a scored table of variant calls per sample.
+The chain is: alignment; grouping of reads into per-molecule, per-strand
+families by UMI, position and alignment; single-strand consensus (SSCS);
+duplex consensus (DCS) requiring the two strands to agree; substitution
+calling and a CIGAR-based indel scan on both tracks; annotation; and
+scoring of every candidate against a per-site background model built from
+eight biological negative controls.
+
+Two properties are fixed by design. The pipeline is blind: stages 1–5 never
+read a patient's known mutations, and tracking diagnosis markers is a
+separate command on the finished consensus BAMs. And DCS is the reported
+track: SSCS exists to confirm, never to quantify.
+
+## 2. Data flow
+
+| Stage | Input | Tool | Output |
+|-------|-------|------|--------|
+| 1 | FASTQ (UMI in the read name, pattern `NNNSS`) | Parabricks fq2bam (GPU); `anneal` (Rust, CPU) | `consensus/<sample>.{sscs,dcs}.sc.sorted.bam`, `stats.txt`, family-size plot |
+| 2 | consensus BAMs | Pisces 5.2 (`--minvf 1e-4`, XV tag stripped, panel reference); `scan_indels.py` | `variants/<sample>.<track>.vcf`, `.pisces.genome.vcf`, `.indels.tsv` |
+| 3 | VCF, indel table | VEP (`--flag_pick --everything --hgvs`), ANNOVAR | `annotated/<sample>.<track>.{annotated,filtered,clinical}.tsv`, `.indels.annotated.tsv` |
+| 4 | DCS BAM | getITD (`-min_read_copies 1`) on FLT3 exons 14–15 | `flt3/` |
+| 5 | VCF, indel table, annotation, background model | `build_candidates.py`, `call_mrd_markers.py`, `report_calls.py` | `scored/<sample>.<track>.{candidates,calls,report}.tsv` |
+
+Stage 1 is the only GPU step (alignment, ~25 min); consensus and stages 2–5
+are CPU. `run_pipeline.sh` chains the stages; `jobs/anneal_e2e.pbs` runs one
+sample end to end on a GPU node and `jobs/anneal_cohort.pbs` does the same
+as an array over a sample sheet.
+
+## 3. Consensus engine
+
+The engine follows ConsensusCruncher (Wang et al. 2019) with singleton
+correction, implemented in Rust.
+
+**Family key.** A read belongs to a family by UMI pair, chromosome, start
+positions of read and mate, strand, read number, and the ordered CIGAR
+pair of read and mate. CIGAR in the key is what makes index-wise consensus
+valid: reads with different soft-clipping or indels vote at shifted
+positions otherwise, and the emitted consensus would carry the alignment
+of an arbitrary member.
+
+**SSCS.** Per family, a base is called where the majority fraction reaches
+`CUTOFF` (0.6) among bases of quality ≥ 30; otherwise N. Quality is the sum
+of the members' qualities, capped at 60.
+
+**Singleton correction.** A molecule represented by one read on one strand
+is not discarded. The lone read is paired with the complementary strand's
+SSCS (strategy 1) or its lone read (strategy 2) and must agree with it base
+by base; disagreement is N. This is where anneal departs from plain duplex
+calling, and it is why families of size 1+N enter the DCS pool. Per-strand
+read counts are emitted as `XA` and `XB`; `ANNEAL_MIN_READS_PER_STRAND=1`
+keeps 1+N molecules, a choice the tier analysis in the CHANGELOG supports
+(the error rate is flat in min(XA, XB)).
+
+**DCS.** Complementary SSCS reads (UMI halves swapped, strand flipped, same
+coordinates and CIGAR) are combined; a base is kept only where both call
+the same non-N base at ≥ Q30, otherwise N. No gap-fill: a position where
+one strand is N stays N, since passing the other strand's base through
+would make single-strand damage indistinguishable from duplex-confirmed
+sequence.
+
+**Why cutoff 0.6.** A 2:1 split in a three-read family calls the majority
+base; at 0.7 it would be N. The choice was made for yield on this panel's
+family-size distribution and is part of the validated configuration.
+Changing it means rebuilding the background model and revalidating.
+
+**Why only two BAMs are kept.** `sscs.sc` and `dcs.sc` (singleton-corrected)
+are the tracks everything downstream consumes; the intermediate SSCS,
+singleton and rescue BAMs are analysis artefacts and stage 1 removes them.
+
+**0.3.0.** Four defects in the earlier engine (CIGAR missing from the key,
+gap-fill in the duplex step, rescued singletons paired with their own
+corrector, double-counted family sizes) made DCS no better than SSCS. Their
+correction took the DCS error rate on the dilution top rung from 2.9e-04 to
+7.6e-05 at unchanged depth, with C>A falling 29×. Details in the CHANGELOG.
+
+## 4. Candidate generation
+
+**Substitutions: Pisces.** Chosen after a comparison with an in-house
+mpileup caller and with SSCS-aware alternatives: it is deterministic,
+reports every site at `--minvf 1e-4`, and its calls on the DCS track matched
+manual counts. Two requirements: the consensus `XV` tag must be stripped
+(Pisces expects it to be an integer), and the reference must be restricted
+to the panel chromosomes (the full contig set exhausts memory). UMI-aware
+callers add nothing downstream of consensus reads: each consensus read is
+already one molecule.
+
+**Indels: CIGAR scan.** Pisces applies a variant-quality gate beneath any
+requested frequency, and at MRD frequencies an NPM1 insertion at 20 reads
+in 50,000 scores VQ 0 and is dropped. `scan_indels.py` counts insertions
+and deletions directly from the CIGAR strings of the consensus BAM, with
+strand counts, and reports recurrence in the controls. Insertions whose
+inserted sequence contains N are strand disagreements inside the insertion,
+not alleles, and are excluded when candidates are built.
+
+**Stage 5 candidates.** The union of the Pisces VCF and the indel table,
+VCF-anchored, deduplicated, labelled from the annotation. Nothing else
+enters; in particular no diagnosis list.
+
+## 5. Background model
+
+A Beta distribution per position and alternate base, per track, from the
+consensus BAMs of eight biological negative controls (`build_background.py`).
+
+- Counts come from pileups of the control BAMs at every panel position
+  (`-Q 30`), so no site is censored by a caller. An earlier version fitted
+  Pisces VCFs and had left 84% of scored calls against a default constant.
+- The mean is the pooled rate under a Jeffreys prior, `(k + 0.5)/(N + 1)`:
+  a site never seen mutated in 35,000 control reads is anchored near
+  1.4e-5 rather than at an external constant.
+- Outlier control. The control with the most alt reads at a site is
+  dropped for that substitution if it carries ≥ 3 reads, is a Poisson
+  outlier (p < 1e-3) against the pooled rate of the other controls, and
+  exceeds that rate ≥ 10×. This removes one control's clone or
+  library-specific event from the site's limit (IDH2 R140Q: five reads in
+  one control, none in seven) while keeping systematic artefact sites, where
+  every control is high, with the moment estimator.
+- Dispersion. Between-control dispersion is estimated by method of moments,
+  with binomial sampling variance subtracted, only when ≥ 20 pooled alt
+  reads sit in ≥ 3 controls; otherwise the binomial concentration divided by
+  3 (a conservative widening). Small-count MoM had been reading a few reads
+  as dispersion at three quarters of the non-zero sites.
+- Indels have no per-site model. Per-track recurrence blocklists
+  (`build_indel_blocklist_v2.py`) list alleles seen in the controls; an
+  allele present in ≥ 6 of 8 (`INDEL_MIN_CONTROLS`) makes a candidate
+  `not_evaluable`. A common germline homopolymer polymorphism the eight
+  controls happen not to carry is therefore called, and the tier column
+  makes that visible.
+- The artefact mask of earlier versions is retired: a 1% floor against a
+  0.005% measured background, and the per-site model does its job.
+
+The report beside each matrix lists, per substitution, controls used,
+pooled depth and count, alpha, beta, the model rate, and a note
 (`outlier_dropped:k/d`, `mom`, or empty).
 
-## Reporting policy
+## 6. Scoring
 
-DCS is the reported track. SSCS is confirmatory only. For each known
-marker the report carries a DCS line and an SSCS line; a marker positive in
-SSCS and negative in DCS is reported as "detected below duplex sensitivity"
-with both counts and both limits. SSCS is not quantitative and is
-damage-prone for C>T/G>A near its limit; SSCS indels in homopolymers are
-blocklisted (CEBPA H24Afs is not evaluable on SSCS). See the 0.3.0
-CHANGELOG for the dilution series that fixed this policy.
+`call_mrd_markers.py` counts reads at each candidate directly from the
+consensus BAM (min base quality 30, the same filter the model was built
+with) and tests the alt count against the site's Beta with a beta-binomial
+tail. `min_alt_callable` is the smallest count that would pass at that
+depth, and `lod_pct` that count as a VAF: the per-locus limit of detection.
+
+**Alpha 0.005.** Marker tracking tests a handful of pre-specified sites
+per patient, so a per-site alpha of 0.005 is the appropriate error rate
+and matches Waalkes et al. Earlier untargeted work used 1e-9 as a crude
+multiple-testing correction across the panel; that is not the clinical
+mode and is not used.
+
+**Calls.** `DETECTED` when the p-value is below alpha and the count is ≥
+`--min-alt`; `not_evaluable` when the site has no model (germline in the
+controls), is blocklisted, or is too shallow; `not_detected` otherwise, with
+the reason in `note`.
+
+**Strand test.** Duplex reads are both-strand by construction, so read
+orientation is alignment orientation, and a site covered by one mate is
+one-sided for reference reads too. With ≥ 10 alt reads ≥ 90% one-sided, a
+call is rejected only if alt orientation differs from reference orientation
+at the same site (Fisher exact, p < 1e-3); rows that are one-sided but not
+biased carry the note `one-sided coverage: ref F/R`.
+
+**Tier.** Presentational, beside the call: `high_vaf` (≥ 20%), `mid_vaf`
+(5–20%), `mrd` (< 5%), `mrd_floor` (an indel at ≤ 3 reads, the weakest
+evidence reported). `report_calls.py` writes the readable view: protein-
+altering consequences only, label split into gene, consequence, protein
+change and source, annotation joined, DETECTED first.
+
+## 7. Marker tracking and reporting
+
+The clinical question is whether a patient's diagnosis variants are present
+in a follow-up sample. That is answered post hoc with
+`call_mrd_markers.py --markers`, counting each marker in the stage 1 BAMs
+and scoring it against the same model. Counting from the BAM rather than
+reading a VCF is deliberate: a marker at a few reads would be absent from
+any caller's output. For a series, the baseline sample's candidate list is
+scored on every later sample; scoring each sample's own list produces
+spurious zeros for markers that fell below the caller's gate.
+
+DCS is reported. SSCS is confirmatory: it can show a known marker that DCS
+has too few molecules for, reported as "detected below duplex sensitivity"
+with both counts and both limits. SSCS is not quantitative (its dilution
+series do not step cleanly) and is damage-prone for C>T/G>A near its limit.
+
+## 8. Depth and limit of detection
+
+The error rate is no longer the constraint; molecules are. At ~2,800×
+duplex depth, three molecules is ~0.1%; 0.05% needs ~6,000×, 0.03% ~10,000×.
+About 15–22% of input molecules yield a duplex read, and a marker can be
+lost from a rung not because of noise but because too few of its molecules
+formed duplexes (IDH2 at rung H in the dilution series: one duplex read
+against six expected, with SSCS showing the molecules at 0.095%). Whether
+more sequencing or more input DNA buys depth is what the saturation test
+(`jobs/anneal_saturation.pbs`) measures; note that the binary's
+`consensus --bedfile` mode double-emits families across overlapping probes
+and must not be used for yield comparisons, which is why the job runs the
+subsamples genome-wide.
+
+## 9. Configuration
+
+Every path, tool and parameter is in `pipeline/config.sh` as
+`VAR="${VAR:-default}"`. The defaults are the validated configuration:
+`ALIGNER=parabricks` through the Apptainer shim, `target_cpu/release/anneal`,
+`CUTOFF=0.6`, min quality 30, singleton correction on,
+`ANNEAL_MIN_READS_PER_STRAND=1`, the rebuilt matrices and per-track
+blocklists, `INDEL_MIN_CONTROLS=6`, alpha 0.005, tiers 20/5. Changing any
+engine or model parameter invalidates the matrices and the validation.
+
+## 10. Known limitations
+
+- One low-coverage probe (CEBPA, 130–220× DCS) is non-evaluable at MRD
+  frequencies; a panel issue.
+- A TP53 intronic position where controls disagree widely (5–15%) is
+  effectively non-evaluable.
+- Indels have no per-site statistical model; a three-read indel absent from
+  the controls is reported, tiered `mrd_floor`.
+- N-containing insertion alleles are excluded at candidate build, not yet
+  at the scanner, which also reports them with the same support as the
+  resolved allele.
+- The consensus caller calls tail positions covered by a single read in a
+  multi-read family with full confidence; unchanged from the validated
+  configuration, and a change requires revalidation.
+- `strand_frac` in the indel table is read orientation, not strand of origin.
+
+## 11. Validation
+
+The 0.3.0 engine and model were validated on a two-fold dilution series of
+a diagnostic sample and by reproducing a by-hand run from FASTQ through the
+front door with identical consensus statistics and identical calls. The
+tables are in `CHANGELOG.md` and are the numbers any rebuild must reproduce.
+
+## 12. References
+
+- Wang et al. ConsensusCruncher: a tool for consensus sequence generation of
+  UMI-tagged reads. Nucleic Acids Research 2019.
+- Waalkes et al. Ultrasensitive detection of acute myeloid leukemia minimal
+  residual disease using single molecule molecular inversion probes.
+  Haematologica 2017.
+- Kennedy et al. Detecting ultralow-frequency mutations by Duplex Sequencing.
+  Nature Protocols 2014.
