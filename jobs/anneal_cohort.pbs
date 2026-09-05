@@ -35,13 +35,17 @@ IDX="${PBS_ARRAY_INDEX:?run as an array: -J 0-N}"
 FULL=$(sed -n "$((IDX + 1))p" "${MANIFEST}")
 [ -n "${FULL}" ] || { echo "ERROR: no manifest line for index ${IDX}"; exit 1; }
 NAME="${FULL%_S*}"
-R1="${FQ}/${FULL}_R1_001.fastq.gz"
-R2="${FQ}/${FULL}_R2_001.fastq.gz"
+# FASTQ suffixes: Illumina default _R1_001.fastq.gz; override for other
+# naming, e.g. -v R1_SUFFIX=_R1.fastq.gz,R2_SUFFIX=_R2.fastq.gz
+R1_SUFFIX="${R1_SUFFIX:-_R1_001.fastq.gz}"
+R2_SUFFIX="${R2_SUFFIX:-_R2_001.fastq.gz}"
+R1="${FQ}/${FULL}${R1_SUFFIX}"
+R2="${FQ}/${FULL}${R2_SUFFIX}"
 
 echo "index:   ${IDX}"
 echo "sample:  ${NAME}"
 echo "host:    $(hostname)"
-echo "commit:  $(git -C "${ANNEAL_ROOT}" describe --tags --always)"
+echo "commit:  $(git -C "${ANNEAL_ROOT}" describe --tags --always 2>/dev/null || cat "${ANNEAL_ROOT}/.git/$(sed "s/ref: //" "${ANNEAL_ROOT}/.git/HEAD")" 2>/dev/null | cut -c1-7)"
 echo "binary:  ${ANNEAL}"
 echo "aligner: ${ALIGNER} ${PARABRICKS_FLAGS} ${ALIGNER_ARGS}"
 echo "start:   $(date)"

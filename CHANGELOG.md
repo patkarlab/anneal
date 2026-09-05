@@ -106,6 +106,18 @@ statistics identical to the 27 Aug by-hand run (246,401,504 reads, 295,090
 rescued, 788,886 DCS), Stage 5 identical (155 candidates, 54 DETECTED, no
 differing call, NPM1 4/6526).
 
+### Reproducibility of the consensus engine
+Consensus statistics and consensus sequences are reproducible run to run;
+read naming (the order of the two halves of a duplex name), the MAPQ
+carried from a representative family member, and about 0.03% of SSCS
+records (singleton-rescue tie-breaks) are not, because those tie-breaks
+follow hash-map iteration order. Established by running the same binary
+twice on one subsample: identical statistics, identical duplex sequences
+for every molecule matched by name. Calls are unaffected. The 0.3.1 rebuild
+(version string only) was verified against the frozen 0.3.0 binary by the
+same test and matches it to the same degree. Making the tie-breaks
+deterministic is a future engine change; it would not alter any sequence.
+
 ### Known issues
 - CEBPA probe delivers 130-220x DCS: non-evaluable at every rung. Panel.
 - TP53 chr17:7676341 T>C: controls disagree (5-15%), fitted concentration

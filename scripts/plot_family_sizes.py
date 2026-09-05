@@ -46,7 +46,7 @@ def plot_single_sample(input_path, output_path, sample_name):
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle(
-        f"Anneal 0.1.0 -- Family Size Distribution\n"
+        f"Anneal 0.3 -- Family Size Distribution\n"
         f"({sample_name}, {total_reads/1e6:.0f}M reads, {total_families/1e6:.1f}M families)",
         fontsize=14, fontweight="bold", y=0.98
     )
@@ -171,7 +171,7 @@ def plot_batch_overlay(input_dir, output_path):
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     fig.suptitle(
-        f"Anneal 0.1.0 -- Family Size Distribution Overlay ({len(samples)} samples)",
+        f"Anneal 0.3 -- Family Size Distribution Overlay ({len(samples)} samples)",
         fontsize=14, fontweight="bold", y=0.98
     )
 

@@ -75,8 +75,10 @@ needs internet, and compute nodes have none) run on the login node.
 | `MANIFEST` | sample sheet (section 4) |
 | `FULL` | one sample's FASTQ name, for a single-sample run |
 
-FASTQ names must be `<sample>_S<n>_R1_001.fastq.gz` and `_R2_001.fastq.gz`;
-the sample name is everything before `_S<n>`.
+FASTQ names are `<sample><R1_SUFFIX>` and `<sample><R2_SUFFIX>`; the defaults are
+the Illumina `_R1_001.fastq.gz` / `_R2_001.fastq.gz`, and other naming is passed on the
+`qsub` line (`R1_SUFFIX=_R1.fastq.gz,R2_SUFFIX=_R2.fastq.gz` for the cohort batches).
+The sample name is everything before `_S<n>` if present, otherwise the whole prefix.
 
 **Never change** without rebuilding the background model and revalidating
 the dilution series (see `CHANGELOG.md` for the numbers that must be
@@ -113,7 +115,7 @@ cd ~/pipelines/anneal && git status --short && git describe --tags
 
 ```bash
 FQ=/scratch/patkarlab-clinical/<batch>
-ls $FQ/*_R1_001.fastq.gz | sed 's#.*/##; s#_R1_001.fastq.gz##' > ~/cohort_<batch>.manifest
+ls $FQ/*_R1*.fastq.gz | sed 's#.*/##; s#_R1.*##' > ~/cohort_<batch>.manifest
 wc -l ~/cohort_<batch>.manifest; head -3 ~/cohort_<batch>.manifest
 ```
 

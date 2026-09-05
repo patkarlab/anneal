@@ -1,0 +1,55 @@
+#!/bin/bash
+#PBS -N anneal_verify_build
+#PBS -q short
+#PBS -l select=1:ncpus=16:mem=64gb
+#PBS -l walltime=03:00:00
+#PBS -j oe
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/
+
+# Verify that a rebuilt consensus binary reproduces the frozen one.
+#
+# Runs the frozen binary (OLD) and the rebuilt binary (NEW) on the same 25%
+# subsample of a kept aligned BAM, genome-wide, at production settings, and
+# compares the consensus statistics and the DCS/SSCS read sets. Identical
+# output means the rebuild changed nothing but the version string.
+#
+#   qsub -v OLD=/path/anneal_frozen,NEW=/path/anneal_new jobs/anneal_verify_build.pbs
+
+ANNEAL_ROOT=/home/patkarlab-clinical/pipelines/anneal
+cd "${ANNEAL_ROOT}"
+source pipeline/config.sh
+activate_conda
+set -euo pipefail
+
+OLD="${OLD:?-v OLD=<frozen binary>}"
+NEW="${NEW:?-v NEW=<rebuilt binary>}"
+ALN="${ALN:-$(find /scratch/patkarlab-clinical/saturation -path '*/alignment/*' -name '*.bam' -size +1G | head -1)}"
+[ -f "${ALN}" ] || { echo "ERROR: aligned BAM not found"; exit 1; }
+W=/scratch/patkarlab-clinical/saturation/verify_build
+mkdir -p "${W}"
+
+echo "old: ${OLD}  $(${OLD} --version 2>/dev/null || true)"
+echo "new: ${NEW}  $(${NEW} --version 2>/dev/null || true)"
+echo "bam: ${ALN}"
+echo "start: $(date)"
+
+SUB="${W}/sub25.bam"
+[ -f "${SUB}" ] || { samtools view -@ 8 -b -s 42.25 "${ALN}" -o "${SUB}"; samtools index -@ 8 "${SUB}"; }
+
+for tag in old new; do
+    bin="${OLD}"; [ "${tag}" = "new" ] && bin="${NEW}"
+    d="${W}/${tag}"; mkdir -p "${d}"
+    "${bin}" consensus --input "${SUB}" --output "${d}" \
+        --cutoff "${CUTOFF}" --min-qual 30 --singleton-correction --no-gpu --threads 16 > "${d}/run.log" 2>&1
+done
+
+echo ""
+echo "=== statistics (excluding the version line) ==="
+diff <(grep -v "^# Anneal" "${W}/old/stats.txt") <(grep -v "^# Anneal" "${W}/new/stats.txt") && echo "stats identical"
+echo "=== read sets ==="
+for t in dcs sscs; do
+    a=$(samtools view "${W}/old/${t}.sc.sorted.bam" | cut -f1-11 | md5sum | cut -c1-12)
+    b=$(samtools view "${W}/new/${t}.sc.sorted.bam" | cut -f1-11 | md5sum | cut -c1-12)
+    [ "${a}" = "${b}" ] && echo "${t}: identical (${a})" || echo "${t}: DIFFER (${a} vs ${b})"
+done
+echo "done: $(date)"

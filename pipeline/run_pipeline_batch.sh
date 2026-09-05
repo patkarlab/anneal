@@ -75,7 +75,7 @@ FAILED_SAMPLES=""
 BATCH_START=$(date +%s)
 
 echo "################################################################"
-echo "  Anneal 0.1.0 -- Batch Pipeline"
+echo "  Anneal 0.3 -- Batch Pipeline"
 echo "  Manifest: ${MANIFEST}"
 echo "  Output:   ${OUTPUT_DIR}/"
 echo "  Options:  ${EXTRA_ARGS[*]:-none}"
@@ -125,7 +125,7 @@ MINUTES=$(( (ELAPSED % 3600) / 60 ))
 # ---- Write batch summary ----
 SUMMARY="${OUTPUT_DIR}/batch_summary.txt"
 cat > "${SUMMARY}" << EOF
-# Anneal 0.1.0 Batch Summary
+# Anneal 0.3 Batch Summary
 Date: $(date '+%Y-%m-%d %H:%M:%S')
 Manifest: ${MANIFEST}
 Options: ${EXTRA_ARGS[*]:-none}

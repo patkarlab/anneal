@@ -1,22 +1,18 @@
 #!/bin/bash
 # =============================================================================
-# config.sh -- Shared configuration for Anneal 0.1.0 pipeline
+# config.sh -- shared configuration for the anneal pipeline (0.3.x)
 #
-# Directory layout:
+# Every path, tool and parameter lives here as VAR="${VAR:-default}"; the
+# defaults are the validated configuration and can be overridden from the
+# environment. Layout:
 #
-#   /home/hemat/anneal/              <-- ANNEAL_ROOT (auto-resolved)
-#     pipeline/                      <-- shell scripts + this config
-#     src/                           <-- Rust source
-#     target/release/anneal          <-- compiled binary
-#     mpileup_variant_caller/        <-- Rust variant caller
-#     scripts/                       <-- plotting + annotation scripts
-#     bin/                           <-- bwa-mem2 wrapper
-#
-#   /goast/hemat_data/
-#     duplex_fastqs/dilution/        <-- input FASTQs
-#     duplex_results/                <-- pipeline outputs
-#
-# Edit the paths below if your layout differs.
+#   ${ANNEAL_ROOT}/               repository (auto-resolved from this file)
+#     pipeline/                   stage scripts and this file
+#     src/                        Rust consensus engine
+#     target_cpu/release/anneal   the validated CPU build (build.sh)
+#     scripts/                    annotation, indel scan, error_model/
+#     bin/                        docker -> apptainer shim for Parabricks
+#     results_bnc/                background matrices and blocklists (data, not in git)
 # =============================================================================
 
 # ---- Auto-resolve directories ----
@@ -27,7 +23,7 @@ ANNEAL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"   # /home/hemat/anneal/
 SEQUENCES_DIR="/home/patkarlab-clinical/pipelines/anneal/sample_fastq"
 RESULTS_DIR="/home/patkarlab-clinical/pipelines/anneal/results"
 
-# ---- Reference genome (U2AF1-fixed hg38 from targeted-seq-pipeline) ----
+# ---- Reference genome (Broad hg38, U2AF1 region masked) ----
 REFERENCE="${REFERENCE:-/home/patkarlab-clinical/references/hg38_broad_bwa/Homo_sapiens_assembly38.masked.fasta}"
 
 # ---- Target panel BED file ----

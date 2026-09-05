@@ -1,8 +1,8 @@
 #!/bin/bash
-#PBS -N anneal_saturation
-#PBS -q A40b
-#PBS -l select=1:ncpus=16:ngpus=1:mem=100gb
-#PBS -l walltime=10:00:00
+#PBS -N anneal_saturation_gw
+#PBS -q short
+#PBS -l select=1:ncpus=16:mem=64gb
+#PBS -l walltime=06:00:00
 #PBS -j oe
 #PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/
 
@@ -28,7 +28,6 @@ ANNEAL_ROOT=/home/patkarlab-clinical/pipelines/anneal
 cd "${ANNEAL_ROOT}"
 source pipeline/config.sh
 activate_conda
-module load apptainer/1.5.1
 
 FULL="${FULL:-25NGS1601-G-Duplex_S9}"
 NAME="${FULL%_S*}"
@@ -76,7 +75,7 @@ echo "aligned BAM: ${ALN}"
 for F in 0.25 0.50 0.75; do
     TAG="${F/0./}"
     SUB="${OUT}/${NAME}.sub${TAG}.bam"
-    DIR="${OUT}/consensus_${TAG}"
+    DIR="${OUT}/consensus_gw_${TAG}"
     if [ ! -f "${DIR}/dcs.sc.sorted.bam" ]; then
         echo "--- ${F}: subsampling ---"
         samtools view -@ 8 -b -s "42${F#0}" "${ALN}" -o "${SUB}"
@@ -86,7 +85,6 @@ for F in 0.25 0.50 0.75; do
         "${ANNEAL}" consensus \
             --input "${SUB}" \
             --output "${DIR}" \
-            --bedfile "${BED}" \
             --cutoff "${CUTOFF}" \
             --min-qual 30 \
             --singleton-correction \
@@ -98,7 +96,7 @@ done
 
 # ---- 3. table ----
 depth() { samtools depth -a -b "${BED}" "$1" 2>/dev/null | awk '{s+=$3; n++} END{ if (n) printf "%.0f", s/n; else print 0 }'; }
-count() { samtools view -@ 8 -c "$1" 2>/dev/null; }
+count() { samtools view -@ 8 -c -L "${BED}" "$1" 2>/dev/null; }
 echo ""
 echo "=== saturation: ${NAME} ==="
 printf "%-9s %14s %12s %12s %12s %12s\n" fraction input_reads sscs_reads dcs_reads sscs_depth dcs_depth
@@ -109,11 +107,11 @@ for F in 0.25 0.50 0.75 1.00; do
         S="${SDIR}/consensus/${NAME}.sscs.sc.sorted.bam"; D="${SDIR}/consensus/${NAME}.dcs.sc.sorted.bam"
         inp="${total}"
     else
-        S="${OUT}/consensus_${TAG}/sscs.sc.sorted.bam"; D="${OUT}/consensus_${TAG}/dcs.sc.sorted.bam"
+        S="${OUT}/consensus_gw_${TAG}/sscs.sc.sorted.bam"; D="${OUT}/consensus_gw_${TAG}/dcs.sc.sorted.bam"
         inp=$(awk -v t="${total}" -v f="${F}" 'BEGIN{printf "%.0f", t*f}')
     fi
     printf "%-9s %14s %12s %12s %12s %12s\n" "${F}" "${inp}" "$(count "${S}")" "$(count "${D}")" "$(depth "${S}")" "$(depth "${D}")"
-done | tee "${OUT}/${NAME}.saturation.tsv"
+done | tee "${OUT}/${NAME}.saturation_gw.tsv"
 echo ""
 echo "alignment kept at ${SDIR}/alignment ($(du -sh "${SDIR}/alignment" | cut -f1)); remove when done:"
 echo "  rm -rf ${SDIR}/alignment"
