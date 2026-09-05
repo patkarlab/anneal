@@ -105,3 +105,12 @@ logs_*/
 *.bak.*
 logs/
 vv_cache.json
+# the background model is versioned with the code
+!results_bnc/
+results_bnc/*
+!results_bnc/beta_matrix_DCS.txt
+!results_bnc/beta_matrix_SSCS.txt
+!results_bnc/beta_matrix_DCS.report.tsv
+!results_bnc/beta_matrix_SSCS.report.tsv
+!results_bnc/indel_blocklist.DCS.patched.tsv
+!results_bnc/indel_blocklist.SSCS.patched.tsv
