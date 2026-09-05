@@ -43,7 +43,7 @@ the defaults are the validated configuration (Parabricks through the
 Apptainer shim, the CPU consensus build, cutoff 0.6, singleton correction on,
 the per-track background files). Every value can be overridden through the
 environment. `jobs/anneal_e2e.pbs` runs one sample end to end on a GPU node
-and is the reference invocation. `SETUP_GUIDE.md` covers installation.
+and is the reference invocation. `SETUP_GUIDE.md` covers installation; `SOP.md` is the operating procedure for running samples and batches.
 
 Requirements: CUDA GPU node for stage 1 (Parabricks via Apptainer), Rust
 toolchain for the consensus binary, conda environment `anneal` (pysam,

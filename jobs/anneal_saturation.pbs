@@ -1,0 +1,117 @@
+#!/bin/bash
+#PBS -N anneal_saturation
+#PBS -q A40b
+#PBS -l select=1:ncpus=16:ngpus=1:mem=100gb
+#PBS -l walltime=10:00:00
+#PBS -j oe
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/
+
+# Saturation curve: how DCS depth scales with sequencing depth, on v0.3.0.
+#
+# 1. Stage 1 for the dilution top rung through run_pipeline.sh (front door,
+#    no overrides). The aligned BAM is kept; this is the 100% point.
+# 2. The aligned BAM is subsampled at 25/50/75% (samtools -s hashes on read
+#    name, so mates stay together) and consensus is run on each with the
+#    patched binary at production settings.
+# 3. A table per fraction: input reads, SSCS reads, DCS reads, mean SSCS and
+#    DCS depth over the panel.
+#
+# Reading it: if DCS depth is still rising nearly linearly at 75-100%, more
+# sequencing buys depth and the linear read estimate holds; if the curve is
+# bending, the library is complexity-limited and more input DNA is needed,
+# not more reads.
+#
+#   qsub jobs/anneal_saturation.pbs             (defaults to the dilution top rung)
+#   qsub -v FULL=<sample>_S<n> jobs/anneal_saturation.pbs
+
+ANNEAL_ROOT=/home/patkarlab-clinical/pipelines/anneal
+cd "${ANNEAL_ROOT}"
+source pipeline/config.sh
+activate_conda
+module load apptainer/1.5.1
+
+FULL="${FULL:-25NGS1601-G-Duplex_S9}"
+NAME="${FULL%_S*}"
+FQ=/scratch/patkarlab-clinical/Duplex_dilutions
+OUT=/scratch/patkarlab-clinical/saturation
+BED="${BEDFILE:-${ANNEAL_ROOT}/AML_MRD_DUPLEX_probes_hg38_sortd.bed}"
+R1="${FQ}/${FULL}_R1_001.fastq.gz"
+R2="${FQ}/${FULL}_R2_001.fastq.gz"
+
+echo "sample:  ${NAME}"
+echo "host:    $(hostname)"
+echo "commit:  $(git -C "${ANNEAL_ROOT}" describe --tags --always)"
+echo "binary:  ${ANNEAL}"
+echo "start:   $(date)"
+for f in "${R1}" "${R2}" "${BED}"; do
+    [ -f "${f}" ] || { echo "ERROR: missing ${f}"; exit 1; }
+done
+
+used=$(lfs quota -u "$USER" /scratch 2>/dev/null | awk 'NR==3{gsub(/\*/,"",$2); print $2}')
+hard=$(lfs quota -u "$USER" /scratch 2>/dev/null | awk 'NR==3{print $4}')
+free_gb=$(( (hard - used) / 1048576 ))
+echo "scratch headroom: ${free_gb} GB"
+if [ "${free_gb}" -lt 300 ]; then
+    echo "ERROR: less than 300 GB free on /scratch; not starting"
+    exit 75
+fi
+mkdir -p "${OUT}"
+
+# ---- 1. full depth through the front door (alignment kept) ----
+SDIR="${OUT}/${NAME}"
+if [ ! -f "${SDIR}/consensus/${NAME}.dcs.sc.sorted.bam" ]; then
+    bash pipeline/run_pipeline.sh "${NAME}" "${R1}" "${R2}" "${OUT}" --stages 1
+    rc=$?
+    [ "${rc}" -eq 0 ] || { echo "ERROR: stage 1 failed (${rc})"; exit "${rc}"; }
+fi
+ALN=$(find "${SDIR}/alignment" -name "*.bam" -size +1G 2>/dev/null | head -1)
+[ -n "${ALN}" ] || { echo "ERROR: aligned BAM not found under ${SDIR}/alignment"; exit 1; }
+[ -f "${ALN}.bai" ] || samtools index -@ 8 "${ALN}"
+echo "aligned BAM: ${ALN}"
+
+# ---- 2. subsamples and consensus at production settings ----
+for F in 0.25 0.50 0.75; do
+    TAG="${F/0./}"
+    SUB="${OUT}/${NAME}.sub${TAG}.bam"
+    DIR="${OUT}/consensus_${TAG}"
+    if [ ! -f "${DIR}/dcs.sc.sorted.bam" ]; then
+        echo "--- ${F}: subsampling ---"
+        samtools view -@ 8 -b -s "42${F#0}" "${ALN}" -o "${SUB}"
+        samtools index -@ 8 "${SUB}"
+        echo "--- ${F}: consensus ---"
+        mkdir -p "${DIR}"
+        "${ANNEAL}" consensus \
+            --input "${SUB}" \
+            --output "${DIR}" \
+            --bedfile "${BED}" \
+            --cutoff "${CUTOFF}" \
+            --min-qual 30 \
+            --singleton-correction \
+            --no-gpu \
+            --threads 16
+        rm -f "${SUB}" "${SUB}.bai"
+    fi
+done
+
+# ---- 3. table ----
+depth() { samtools depth -a -b "${BED}" "$1" 2>/dev/null | awk '{s+=$3; n++} END{ if (n) printf "%.0f", s/n; else print 0 }'; }
+count() { samtools view -@ 8 -c "$1" 2>/dev/null; }
+echo ""
+echo "=== saturation: ${NAME} ==="
+printf "%-9s %14s %12s %12s %12s %12s\n" fraction input_reads sscs_reads dcs_reads sscs_depth dcs_depth
+total=$(count "${ALN}")
+for F in 0.25 0.50 0.75 1.00; do
+    TAG="${F/0./}"
+    if [ "${F}" = "1.00" ]; then
+        S="${SDIR}/consensus/${NAME}.sscs.sc.sorted.bam"; D="${SDIR}/consensus/${NAME}.dcs.sc.sorted.bam"
+        inp="${total}"
+    else
+        S="${OUT}/consensus_${TAG}/sscs.sc.sorted.bam"; D="${OUT}/consensus_${TAG}/dcs.sc.sorted.bam"
+        inp=$(awk -v t="${total}" -v f="${F}" 'BEGIN{printf "%.0f", t*f}')
+    fi
+    printf "%-9s %14s %12s %12s %12s %12s\n" "${F}" "${inp}" "$(count "${S}")" "$(count "${D}")" "$(depth "${S}")" "$(depth "${D}")"
+done | tee "${OUT}/${NAME}.saturation.tsv"
+echo ""
+echo "alignment kept at ${SDIR}/alignment ($(du -sh "${SDIR}/alignment" | cut -f1)); remove when done:"
+echo "  rm -rf ${SDIR}/alignment"
+echo "done: $(date)"

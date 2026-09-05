@@ -26,8 +26,8 @@ module load apptainer/1.5.1
 
 FULL="${FULL:?submit with -v FULL=<sample>_S<n>, e.g. <diagnostic sample>_S<n>}"
 NAME="${FULL%_S*}"
-FQ=/scratch/patkarlab-clinical/Duplex_dilutions
-OUT=/scratch/patkarlab-clinical/dilution_v030
+FQ="${FQ:-/scratch/patkarlab-clinical/Duplex_dilutions}"
+OUT="${OUT:-/scratch/patkarlab-clinical/dilution_v030}"
 R1="${FQ}/${FULL}_R1_001.fastq.gz"
 R2="${FQ}/${FULL}_R2_001.fastq.gz"
 

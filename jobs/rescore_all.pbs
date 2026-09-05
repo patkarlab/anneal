@@ -1,0 +1,19 @@
+#!/bin/bash
+#PBS -N rescore_all
+#PBS -q short
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o /home/patkarlab-clinical/pipelines/anneal/logs/
+# Stage 5 (calls, tier, report) for every sample in both output trees.
+cd /home/patkarlab-clinical/pipelines/anneal
+source pipeline/config.sh
+activate_conda
+for OUT in /scratch/patkarlab-clinical/dilution_v030 /scratch/patkarlab-clinical/dilution_patched; do
+  for d in "${OUT}"/*/; do
+    S=$(basename "${d}"); [ -d "${d}/variants" ] || continue
+    echo "=== ${S} ==="
+    bash pipeline/stage5_score.sh "${S}" "${OUT}" 2>&1 | grep -E "rows in|calls:|ERROR"
+  done
+done
+echo "done: $(date)"
