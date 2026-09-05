@@ -34,7 +34,7 @@ print(f"{'driver':40} {'rung':4} {'altIns':>7} {'depth':>7} {'VAF%':>8}  fold-vs
 for label, chrom, pos1, ins in drivers:
     prev=None
     for R in "GHIJ":
-        b=glob.glob(f"results_dilution_gpu/25NGS1601-{R}-Duplex/consensus/25NGS1601-{R}-Duplex.sscs.sc.sorted.bam")[0]
+        b=glob.glob(f"results_dilution_gpu/DIL-A-{R}-Duplex/consensus/DIL-A-{R}-Duplex.sscs.sc.sorted.bam")[0]
         a,d = count_insertion(b, chrom, pos1, ins)
         vaf = 100*a/d if d else 0
         fold = "" if prev is None else (f"{prev/vaf:.1f}x" if vaf>0 else "->floor")

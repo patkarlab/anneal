@@ -12,7 +12,7 @@ conda activate anneal
 # ---- Paths ----
 ANNOVAR=/home/patkarlab-clinical/programs/annovar
 HUMANDB=/home/patkarlab-clinical/references/humandb
-SAMPLE=25NGS1601-G-Duplex
+SAMPLE=DIL-A-G-Duplex
 DIR=results_dilution_gpu/${SAMPLE}
 
 VARDICT=$DIR/${SAMPLE}.sscs.vardict.vcf

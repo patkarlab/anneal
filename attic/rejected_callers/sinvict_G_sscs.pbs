@@ -19,7 +19,7 @@ SINVICT="${SINVICT:-$HOME/programs/sinvict/sinvict}"
 # ---- Inputs (locked, confirmed) ----
 REF="${REF:-/home/patkarlab-clinical/references/hg38_broad/Homo_sapiens_assembly38.fasta}"
 BED="${BED:-AML_MRD_DUPLEX_probes_hg38_sortd.bed}"
-SAMPLE="${SAMPLE:-25NGS1601-G-Duplex}"
+SAMPLE="${SAMPLE:-DIL-A-G-Duplex}"
 DIR="${DIR:-results_dilution_gpu/${SAMPLE}}"
 BAM="${BAM:-${DIR}/${SAMPLE}.sscs.panel.bam}"   # shared panel BAM, no indelqual tags
 

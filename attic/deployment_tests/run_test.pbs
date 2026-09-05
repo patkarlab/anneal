@@ -13,9 +13,9 @@ eval "$(/home/patkarlab-clinical/miniconda3/bin/conda shell.bash hook)"
 conda activate anneal
 mkdir -p /home/patkarlab-clinical/pipelines/anneal/results
 bash pipeline/run_pipeline.sh \
-    25NGS1071-Duplex \
-    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R1_001.fastq.gz \
-    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R2_001.fastq.gz \
+    DX-2-Duplex \
+    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/DX-2-Duplex_S1_R1_001.fastq.gz \
+    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/DX-2-Duplex_S1_R2_001.fastq.gz \
     /home/patkarlab-clinical/pipelines/anneal/results \
     --stages 1,2
 echo "Run complete: $(date)"

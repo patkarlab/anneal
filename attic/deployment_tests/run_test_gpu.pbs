@@ -14,9 +14,9 @@ conda activate anneal
 mkdir -p /home/patkarlab-clinical/pipelines/anneal/results_gpu
 # temporarily run with USE_GPU=true via env override is not supported; set in config below
 bash pipeline/run_pipeline.sh \
-    25NGS1071-Duplex \
-    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R1_001.fastq.gz \
-    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/25NGS1071-Duplex_S1_R2_001.fastq.gz \
+    DX-2-Duplex \
+    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/DX-2-Duplex_S1_R1_001.fastq.gz \
+    /home/patkarlab-clinical/pipelines/anneal/sample_fastq/DX-2-Duplex_S1_R2_001.fastq.gz \
     /home/patkarlab-clinical/pipelines/anneal/results_gpu \
     --stages 1,2
 echo "GPU run complete: $(date)"
